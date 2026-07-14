@@ -45,13 +45,18 @@ function compatible(left: LocatedDetection, right: LocatedDetection) {
 function merge(left: LocatedDetection, right: LocatedDetection): LocatedDetection {
   const winner = right.confidence > left.confidence ? right : left;
   const fallback = winner === right ? left : right;
+  const categoriesDisagree = left.category !== right.category;
+  const categoryEvidence = categoriesDisagree
+    ? [`category claim: ${left.category}`, `category claim: ${right.category}`]
+    : [];
   return {
     ...winner,
+    category: left.category === "unknown" || right.category === "unknown" ? "unknown" : winner.category,
     label: winner.label ?? fallback.label,
     manufacturer: winner.manufacturer ?? fallback.manufacturer,
     modelNumber: winner.modelNumber ?? fallback.modelNumber,
     specifications: [...new Set([...left.specifications, ...right.specifications])],
-    evidence: [...new Set([...left.evidence, ...right.evidence])],
+    evidence: [...new Set([...left.evidence, ...right.evidence, ...categoryEvidence])],
     sourceTileIds: [...new Set([...left.sourceTileIds, ...right.sourceTileIds])].sort(),
     overviewLocation: winner.overviewLocation,
     reviewRequired: true,

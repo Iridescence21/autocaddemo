@@ -99,4 +99,46 @@ describe("vision detection consolidation", () => {
     expect(component.location.height).toBeCloseTo(0.0625);
     expect(component.evidence).toEqual(expect.arrayContaining(["enumerated", "verified"]));
   });
+
+  it("keeps unknown when a high-overlap detection disagrees with a known category", () => {
+    const components = consolidateVisionComponents(result([
+      detection({
+        temporaryId: "tile-1-enumerate-1",
+        category: "unknown",
+        label: null,
+        confidence: 0.75,
+        evidence: ["enumeration category claim: unknown"],
+        tileId: "tile-1-1",
+        location: box(0.75, 0.3, 0.1, 0.1),
+      }),
+      detection({
+        temporaryId: "tile-1-verify-1",
+        category: "contactor",
+        label: "KM1",
+        confidence: 0.9,
+        evidence: ["verification category claim: contactor"],
+        tileId: "tile-1-2",
+        location: box(0.0833, 0.3, 0.1, 0.1),
+      }),
+    ]), rendered);
+
+    expect(components).toHaveLength(1);
+    const [component] = components;
+    if (!component) throw new Error("expected one consolidated component");
+    if (!component.location) throw new Error("expected consolidated location");
+    expect(component.category).toBe("unknown");
+    expect(component.reviewStatus).toBe("unknown");
+    expect(component.temporaryId).toBe("tile-1-verify-1");
+    expect(component.sourceTileId).toBe("tile-1-1,tile-1-2");
+    expect(component.location.x).toBeCloseTo(0.44998);
+    expect(component.location.y).toBeCloseTo(0.1875);
+    expect(component.location.width).toBeCloseTo(0.06);
+    expect(component.location.height).toBeCloseTo(0.0625);
+    expect(component.evidence).toEqual(expect.arrayContaining([
+      "enumeration category claim: unknown",
+      "verification category claim: contactor",
+      "category claim: unknown",
+      "category claim: contactor",
+    ]));
+  });
 });
