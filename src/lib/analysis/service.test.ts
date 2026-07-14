@@ -11,6 +11,53 @@ import { openAiVisionAnalyzer } from "@/lib/vision/openai-analyzer";
 import { createConversation } from "@/lib/repositories/conversations";
 import { createDrawingUpload, getAnalysisSnapshot, updateAnalysisStatus } from "@/lib/repositories/drawings";
 import { listMessages } from "@/lib/repositories/messages";
+import type { CadRenderAdapter } from "@/lib/cad/types";
+import type { DrawingVisionAnalyzer } from "@/lib/vision/types";
+
+const partialCoverageRenderer: CadRenderAdapter = {
+  async render() {
+    return {
+      overviewImageUrl: "data:image/svg+xml,fixture",
+      width: 100,
+      height: 100,
+      tiles: [
+        { id: "tile-1", imageUrl: "data:image/svg+xml,tile-1", x: 0, y: 0, width: 50, height: 50, overlap: 0, cadBounds: { minX: 0, minY: 0, maxX: 50, maxY: 50 }, entityCount: 1, textCount: 0, blockCount: 0 },
+        { id: "tile-2", imageUrl: "data:image/svg+xml,tile-2", x: 50, y: 0, width: 50, height: 50, overlap: 0, cadBounds: { minX: 50, minY: 0, maxX: 100, maxY: 50 }, entityCount: 1, textCount: 0, blockCount: 0 },
+      ],
+      metadata: { coverageLimited: true },
+    };
+  },
+};
+
+const partialCoverageAnalyzer: DrawingVisionAnalyzer = {
+  async analyze() {
+    const detection = (temporaryId: string, label: string, x: number) => ({
+      temporaryId,
+      category: "contactor" as const,
+      label,
+      description: "可能为接触器",
+      manufacturer: null,
+      modelNumber: null,
+      specifications: ["24VDC"],
+      confidence: 0.8,
+      tileId: "tile-1",
+      location: { x, y: 0.1, width: 0.1, height: 0.1 },
+      evidence: ["fixture"],
+      reviewRequired: true,
+    });
+    return {
+      drawingSummary: "控制柜局部区域",
+      components: [
+        detection("KM1-coil", "KM1", 0.1),
+        detection("KM1-contact", "KM1", 0.3),
+        detection("KA1-coil", "KA1", 0.5),
+        detection("KA1-contact", "KA1", 0.7),
+      ],
+      warnings: ["模型仅完成部分区域"],
+      analysisDiagnostics: { attemptedTiles: 3, completedTiles: 2, failedTiles: 1, verificationTiles: 0, rawDetectionCount: 4, coverageLimited: true },
+    };
+  },
+};
 
 describe("demo analysis service", () => {
   beforeEach(async () => resetTestDatabase());
@@ -93,6 +140,38 @@ describe("demo analysis service", () => {
     const messages = await listMessages(conversation.id, "demo-user");
     expect(messages.some((message) => message.type === "analysis_progress")).toBe(true);
     expect(messages.some((message) => message.type === "component_results")).toBe(true);
+  });
+
+  it("persists separate occurrence and physical-device counts with partial-coverage warnings", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Partial coverage" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "partial.dxf",
+      safeFilename: "partial.dxf",
+      storageKey: "fixtures/cad/synthetic-control-panel.dxf",
+      sourceType: "dxf",
+      byteSize: 128,
+    });
+
+    const result = await runDrawingAnalysis(drawing.id, "demo-user", {
+      renderer: partialCoverageRenderer,
+      analyzer: partialCoverageAnalyzer,
+      sourcePathResolver: () => "fixtures/cad/synthetic-control-panel.dxf",
+      delayMs: 0,
+    });
+
+    expect(result.components).toHaveLength(4);
+    expect(result.physicalDevices).toHaveLength(2);
+    expect(result.analysisDiagnostics.completedTiles).toBe(2);
+    const messages = await listMessages(conversation.id, "demo-user");
+    expect(messages.find((message) => message.type === "component_results")?.payload).toMatchObject({
+      symbolOccurrenceCount: 4,
+      physicalDeviceCount: 2,
+    });
+    expect(messages.find((message) => message.type === "drawing_summary")?.payload).toMatchObject({
+      warnings: expect.arrayContaining([expect.stringContaining("部分区域未完整扫描")]),
+    });
   });
 
   it("preserves the latest job progress when a background analysis fails", async () => {

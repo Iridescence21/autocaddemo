@@ -3,13 +3,14 @@ import { resolve } from "node:path";
 import type { ComponentInput } from "@/lib/domain";
 import { appendMessage } from "@/lib/repositories/messages";
 import { getAnalysisSnapshot, saveDrawingPreview, updateAnalysisStatus } from "@/lib/repositories/drawings";
-import { generateBom, replaceComponents } from "@/lib/repositories/components";
+import { generateBom, replaceComponents, replacePhysicalDevices } from "@/lib/repositories/components";
+import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
 import { demoAnalyzer } from "@/lib/cad/demo-analyzer";
 import { demoRenderer } from "@/lib/cad/demo-renderer";
 import { getCadRenderer } from "@/lib/cad/registry";
 import type { CadRenderAdapter, CadSourceType, DemoAnalysisResult, RenderedCadDrawing } from "@/lib/cad/types";
 import { openAiVisionAnalyzer, VisionAnalysisError } from "@/lib/vision/openai-analyzer";
-import type { DrawingVisionAnalyzer, ValidatedVisionResult } from "@/lib/vision/types";
+import type { DrawingVisionAnalyzer, ValidatedVisionResult, VisionAnalysisDiagnostics } from "@/lib/vision/types";
 import { consolidateVisionComponents } from "@/lib/vision/consolidate";
 import { formatCategorizedComponents } from "@/lib/presentation/component-list";
 
@@ -62,6 +63,51 @@ export async function selectDefaultAdapters(
 function componentsFromAnalysis(mode: AnalysisMode, analysis: AnalyzerResult, rendered: RenderedCadDrawing): ComponentInput[] {
   if (mode === "vision") return consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
   return (analysis as DemoAnalysisResult).components;
+}
+
+function analysisDiagnosticsFrom(mode: AnalysisMode, analysis: AnalyzerResult, rendered: RenderedCadDrawing, componentCount: number): VisionAnalysisDiagnostics {
+  if (mode === "vision") return (analysis as ValidatedVisionResult).analysisDiagnostics;
+  return {
+    attemptedTiles: rendered.tiles.length,
+    completedTiles: rendered.tiles.length,
+    failedTiles: 0,
+    verificationTiles: 0,
+    rawDetectionCount: componentCount,
+    coverageLimited: Boolean(rendered.metadata?.coverageLimited),
+  };
+}
+
+function hasLimitedCoverage(diagnostics: VisionAnalysisDiagnostics) {
+  return diagnostics.coverageLimited || diagnostics.failedTiles > 0 || diagnostics.completedTiles < diagnostics.attemptedTiles;
+}
+
+function warningList(warnings: string[], diagnostics: VisionAnalysisDiagnostics) {
+  return [...new Set([
+    ...warnings,
+    ...(hasLimitedCoverage(diagnostics) ? ["部分区域未完整扫描，结果可能不完整。"] : []),
+  ])];
+}
+
+function deviceOccurrences(components: Awaited<ReturnType<typeof replaceComponents>>): DeviceOccurrence[] {
+  return components
+    .filter((component) => !component.removedAt)
+    .map((component) => ({
+      temporaryId: component.temporaryId,
+      occurrenceId: component.id,
+      category: component.category as DeviceOccurrence["category"],
+      tag: component.tag,
+      description: component.description,
+      specifications: stringValues(component.specifications),
+      manufacturer: component.manufacturer,
+      modelNumber: component.modelNumber,
+      confidence: component.confidence,
+      evidence: stringValues(component.evidence),
+      reviewStatus: component.reviewStatus as DeviceOccurrence["reviewStatus"],
+    }));
+}
+
+function stringValues(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 const dwgConversionFailures: Record<string, Omit<AnalysisFailure, "code">> = {
@@ -125,14 +171,22 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
   for (const item of stages.slice(4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
   const componentInputs = componentsFromAnalysis(analysisMode, analysis, rendered);
   const components = await replaceComponents(drawingId, ownerScope, componentInputs);
+  const physicalDevices = await replacePhysicalDevices(drawingId, ownerScope, groupPhysicalDevices(deviceOccurrences(components)));
+  const bom = await generateBom(drawingId, ownerScope);
+  const analysisDiagnostics = analysisDiagnosticsFrom(analysisMode, analysis, rendered, components.length);
+  const analysisWarnings = warningList(analysis.warnings, analysisDiagnostics);
   const reviewCount = components.filter((component) => component.reviewStatus === "requires_review").length;
   const unknownCount = components.filter((component) => component.category === "unknown").length;
   const confirmedCount = components.filter((component) => component.reviewStatus === "confirmed").length;
+  const categoryCounts = components.reduce<Record<string, number>>((counts, component) => {
+    counts[component.category] = (counts[component.category] ?? 0) + 1;
+    return counts;
+  }, {});
   await appendMessage(snapshot.drawing.conversationId, {
     ownerScope,
     role: "assistant",
     type: "drawing_summary",
-    payload: { drawingId, summary: analysis.drawingSummary, warnings: analysis.warnings },
+    payload: { drawingId, summary: analysis.drawingSummary, warnings: analysisWarnings, analysisDiagnostics },
   });
   await appendMessage(snapshot.drawing.conversationId, {
     ownerScope,
@@ -141,22 +195,26 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
     payload: {
       drawingId,
       total: components.length,
+      symbolOccurrenceCount: components.length,
+      physicalDeviceCount: physicalDevices.length,
       confirmed: confirmedCount,
       requiresReview: reviewCount,
       unknown: unknownCount,
-      markdown: formatCategorizedComponents(components),
+      categoryCounts,
+      analysisDiagnostics,
+      warnings: analysisWarnings,
+      markdown: formatCategorizedComponents(components, { physicalDeviceCount: physicalDevices.length }),
     },
   });
-  const bom = await generateBom(drawingId, ownerScope);
   await appendMessage(snapshot.drawing.conversationId, {
     ownerScope,
     role: "assistant",
     type: "bom_results",
-    payload: { drawingId, itemCount: bom?.items.length ?? 0, totalQuantity: bom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0 },
+    payload: { drawingId, physicalDeviceCount: physicalDevices.length, itemCount: bom?.items.length ?? 0, totalQuantity: bom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0 },
   });
   const finalStatus = reviewCount || unknownCount || components.length === 0 ? "requires_review" : "completed";
   await updateAnalysisStatus(drawingId, ownerScope, { status: finalStatus, progress: 100, stage: "分析完成" });
-  return { status: finalStatus, components, bomItems: bom?.items ?? [] };
+  return { status: finalStatus, components, physicalDevices, bomItems: bom?.items ?? [], analysisDiagnostics };
 }
 
 export const runDemoAnalysis = runDrawingAnalysis;

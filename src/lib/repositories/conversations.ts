@@ -15,7 +15,7 @@ export async function listConversations(ownerScope: string) {
 export async function getConversation(id: string, ownerScope: string) {
   return prisma.drawingConversation.findFirst({
     where: { id, ownerScope },
-    include: { drawing: { include: { analysisJob: true, components: true, bomItems: true } } },
+    include: { drawing: { include: { analysisJob: true, components: true, physicalDevices: true, bomItems: true } } },
   });
 }
 

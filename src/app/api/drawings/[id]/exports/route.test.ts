@@ -43,6 +43,9 @@ describe("drawing Excel export route", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(await response.arrayBuffer());
     expect(workbook.worksheets).toHaveLength(1);
-    expect(workbook.getWorksheet("元件分析清单")?.getRow(2).values).toContain("KM1");
+    const sheet = workbook.getWorksheet("元件分析清单");
+    expect(sheet?.getCell("A1").value).toBe("符号实例清单");
+    expect(sheet?.getSheetValues().flat()).toContain("KM1");
+    expect(sheet?.getSheetValues().flat()).toContain("物理设备与初步 BOM");
   });
 });

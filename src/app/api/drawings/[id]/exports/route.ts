@@ -3,7 +3,7 @@ import { bomToCsv, buildComponentWorkbook } from "@/lib/export";
 import { OWNER_SCOPE } from "@/lib/domain";
 import { prisma } from "@/lib/db";
 import { getAnalysisSnapshot } from "@/lib/repositories/drawings";
-import { appendMessage } from "@/lib/repositories/messages";
+import { appendMessage, listMessages } from "@/lib/repositories/messages";
 
 export const runtime = "nodejs";
 
@@ -22,10 +22,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return new Response(csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": contentDisposition(filename), "Cache-Control": "no-store" } });
   }
 
+  const messages = await listMessages(snapshot.drawing.conversationId, OWNER_SCOPE);
+  const summaryPayload = [...messages].reverse().find((message) => message.type === "drawing_summary")?.payload as { warnings?: unknown } | undefined;
+  const analysisWarnings = Array.isArray(summaryPayload?.warnings)
+    ? summaryPayload.warnings.filter((warning): warning is string => typeof warning === "string")
+    : [];
   const workbook = buildComponentWorkbook({
     drawingId,
     filename: snapshot.drawing.originalFilename,
     components: snapshot.components,
+    physicalDevices: snapshot.physicalDevices,
+    bomItems: snapshot.bomItems,
+    analysisWarnings,
   });
   const buffer = await workbook.xlsx.writeBuffer();
   const filename = `${basename}-component-analysis.xlsx`;

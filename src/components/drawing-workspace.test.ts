@@ -40,4 +40,14 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(source).toContain("元件分析清单.xlsx");
     expect(source).not.toContain("初步-BOM.csv");
   });
+
+  it("distinguishes symbol occurrences from physical devices and keeps limited coverage visible", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+
+    expect(source).toContain("符号实例");
+    expect(source).toContain("物理设备");
+    expect(source).toContain("符号清单");
+    expect(source).toContain("扫描区域受限，结果可能不完整");
+    expect(source).toContain("physicalDevices");
+  });
 });

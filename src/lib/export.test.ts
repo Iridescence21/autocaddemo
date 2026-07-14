@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { bomToCsv, buildComponentWorkbook } from "@/lib/export";
 
+function findCell(sheet: import("exceljs").Worksheet, expected: unknown) {
+  let found = false;
+  sheet.eachRow((row) => row.eachCell((cell) => { if (cell.value === expected) found = true; }));
+  return found;
+}
+
 describe("BOM export", () => {
   it("exports stable identifiers and explicit missing-data labels", () => {
     const csv = bomToCsv([{ id: "bom-1", itemNumber: 1, category: "contactor", description: "Probable contactor", manufacturer: null, modelNumber: null, specifications: ["24VDC"], quantity: 1, confidence: 0.78, reviewStatus: "requires_review" }]);
@@ -10,13 +16,14 @@ describe("BOM export", () => {
     expect(csv).toContain("类别");
   });
 
-  it("builds one labeled Excel sheet with every detected component", async () => {
+  it("builds one worksheet with symbol occurrences followed by physical-device BOM totals", async () => {
     const workbook = buildComponentWorkbook({
       drawingId: "drawing-1",
       filename: "Control_Panel_A.dxf",
       components: [{
         id: "component-1",
-        temporaryId: "detection-001",
+        temporaryId: "KM1-coil",
+        physicalDeviceId: "physical-KM1",
         category: "contactor",
         tag: "KM1",
         description: "Probable contactor",
@@ -33,16 +40,44 @@ describe("BOM export", () => {
         correctedCategory: null,
         removedAt: null,
       }],
+      physicalDevices: [{
+        id: "physical-KM1",
+        temporaryId: "device-KM1",
+        tag: "KM1",
+        category: "contactor",
+        description: "Probable contactor",
+        manufacturer: null,
+        modelNumber: "=BAD",
+        specifications: ["24VDC"],
+        quantity: 1,
+        confidence: 0.78,
+        reviewStatus: "requires_review",
+        evidence: ["Nearby label KM1"],
+      }],
+      bomItems: [{
+        id: "bom-1",
+        itemNumber: 1,
+        category: "contactor",
+        description: "Probable contactor",
+        manufacturer: null,
+        modelNumber: "=BAD",
+        specifications: ["24VDC"],
+        quantity: 1,
+        confidence: 0.78,
+        reviewStatus: "requires_review",
+      }],
+      analysisWarnings: ["部分区域未完整扫描，结果可能不完整。"],
     });
 
     expect(workbook.worksheets).toHaveLength(1);
-    const sheet = workbook.getWorksheet("元件分析清单");
-    expect(sheet).toBeDefined();
-    expect(sheet?.getRow(1).values).toContain("类别");
-    expect(sheet?.getRow(2).getCell(4).value).toBe("接触器");
-    expect(sheet?.getRow(2).values).toContain("图纸中未显示");
-    expect(sheet?.getRow(2).values).toContain("'=BAD");
-    expect(sheet?.getRow(2).values).toContain("需要工程师确认");
+    const sheet = workbook.getWorksheet("元件分析清单")!;
+    expect(sheet.getCell("A1").value).toBe("符号实例清单");
+    expect(findCell(sheet, "物理设备与初步 BOM")).toBeTruthy();
+    expect(findCell(sheet, "KM1-coil")).toBeTruthy();
+    expect(findCell(sheet, "device-KM1")).toBeTruthy();
+    expect(findCell(sheet, 1)).toBeTruthy();
+    expect(findCell(sheet, "'=BAD")).toBeTruthy();
+    expect(findCell(sheet, "部分区域未完整扫描，结果可能不完整。")).toBeTruthy();
 
     const bytes = await workbook.xlsx.writeBuffer();
     expect(bytes.byteLength).toBeGreaterThan(1000);

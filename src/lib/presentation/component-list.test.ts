@@ -28,4 +28,12 @@ describe("Chinese categorized component list", () => {
     expect(markdown).toContain("已由工程师确认");
     expect(markdown).toContain("需要工程师复核");
   });
+
+  it("labels the list as symbol occurrences and shows the distinct physical-device count", () => {
+    const markdown = formatCategorizedComponents(components, { physicalDeviceCount: 2 });
+
+    expect(markdown).toContain("符号实例：3");
+    expect(markdown).toContain("物理设备：2");
+    expect(markdown).toContain("符号清单");
+  });
 });

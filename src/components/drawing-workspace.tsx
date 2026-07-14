@@ -23,6 +23,7 @@ type Component = {
   evidence: unknown;
   method: string;
   reviewStatus: string;
+  physicalDeviceId?: string | null;
   location: unknown;
   removedAt: string | null;
 };
@@ -40,6 +41,8 @@ type BomItem = {
   reviewStatus: string;
 };
 
+type PhysicalDevice = { id: string; temporaryId: string; tag: string | null; category: string; reviewStatus: string };
+
 type Drawing = {
   id: string;
   originalFilename: string;
@@ -51,6 +54,7 @@ type Drawing = {
   previewHeight?: number | null;
   analysisJob?: { id: string; status: string; progress: number; stage: string; errorMessage?: string | null } | null;
   components: Component[];
+  physicalDevices: PhysicalDevice[];
   bomItems: BomItem[];
 };
 
@@ -78,6 +82,13 @@ function specifications(value: unknown) {
   return items.length ? items.join("；") : "图纸中未显示";
 }
 
+function coverageLimited(data: Record<string, unknown>) {
+  const diagnostics = data.analysisDiagnostics;
+  if (!diagnostics || typeof diagnostics !== "object") return false;
+  const values = diagnostics as Record<string, unknown>;
+  return values.coverageLimited === true || Number(values.failedTiles ?? 0) > 0 || Number(values.completedTiles ?? 0) < Number(values.attemptedTiles ?? 0);
+}
+
 function messageToBubble(item: MessageRecord, progressComplete = false): BubbleItemType {
   const data = messagePayload(item);
   let content: React.ReactNode = null;
@@ -96,12 +107,13 @@ function messageToBubble(item: MessageRecord, progressComplete = false): BubbleI
     }]} />;
   }
   if (item.type === "drawing_summary") {
-    const warnings = stringArray(data.warnings);
+    const warnings = [...stringArray(data.warnings), ...(coverageLimited(data) ? ["扫描区域受限，结果可能不完整"] : [])];
     content = <XMarkdown content={`### 图纸概览\n\n${String(data.summary ?? "暂时无法生成图纸概览。")}\n\n> ${warnings.length ? warnings.join("；") : "初步识别结果必须由电气工程师复核。"}`} />;
   }
   if (item.type === "component_results") {
-    const markdown = typeof data.markdown === "string" ? data.markdown : `### 元件识别结果\n\n共识别 **${String(data.total ?? 0)}** 个元件；**${String(data.requiresReview ?? 0)}** 个需要复核；**${String(data.unknown ?? 0)}** 个未知。`;
-    content = <XMarkdown content={markdown} />;
+    const markdown = typeof data.markdown === "string" ? data.markdown : `### 符号清单\n\n符号实例：${String(data.symbolOccurrenceCount ?? data.total ?? 0)}\n\n物理设备：${String(data.physicalDeviceCount ?? 0)}\n\n待复核：${String(data.requiresReview ?? 0)}\n\n未知符号：${String(data.unknown ?? 0)}`;
+    const coverageWarning = coverageLimited(data) ? "\n\n> 扫描区域受限，结果可能不完整" : "";
+    content = <XMarkdown content={`${markdown}${coverageWarning}`} />;
   }
   if (item.type === "bom_results") {
     content = <XMarkdown content={`### 初步 BOM 已生成\n\n共 **${String(data.itemCount ?? 0)}** 个采购分组，合计数量 **${String(data.totalQuantity ?? 0)}**。\n\n图纸中未显示的制造商和型号不会被猜测。`} />;
@@ -112,10 +124,10 @@ function messageToBubble(item: MessageRecord, progressComplete = false): BubbleI
   return { key: item.id, role: item.role === "user" ? "user" : "ai", content, status: item.type === "error" ? "error" : "success" };
 }
 
-function bomMarkdown(items: BomItem[]) {
+function bomMarkdown(items: BomItem[], physicalDeviceCount: number) {
   if (!items.length) return "### 初步 BOM\n\n尚未生成采购清单。分析完成后可在这里生成 BOM。";
   const rows = items.map((item) => `| ${item.itemNumber} | ${COMPONENT_CATEGORY_LABELS[item.category as ComponentCategory] ?? item.category} | ${item.description} | ${visibleValue(item.manufacturer)} | ${visibleValue(item.modelNumber)} | ${specifications(item.specifications)} | ${item.quantity} | ${Math.round(item.confidence * 100)}% | ${item.reviewStatus === "confirmed" ? "已确认" : "需要复核"} |`);
-  return `### 初步采购 BOM\n\n> 所有采购信息必须由电气工程师确认。\n\n| 项次 | 类别 | 描述 | 制造商 | 型号 | 规格 | 数量 | 置信度 | 状态 |\n| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |\n${rows.join("\n")}`;
+  return `### 初步 BOM（按物理设备汇总）\n\n物理设备：${physicalDeviceCount}\n\n> 所有采购信息必须由电气工程师确认。\n\n| 项次 | 类别 | 描述 | 制造商 | 型号 | 规格 | 数量 | 置信度 | 状态 |\n| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |\n${rows.join("\n")}`;
 }
 
 export default function DrawingWorkspace() {
@@ -383,7 +395,7 @@ export default function DrawingWorkspace() {
     { key: "review", label: "查看复核规则", description: "所有 AI 结果都需要工程师确认" },
   ];
   const followupPrompts = [
-    { key: "components", label: "元件清单", description: `${activeComponents.length} 个有效元件` },
+    { key: "components", label: "符号清单", description: `符号实例 ${activeComponents.length} · 物理设备 ${activeDrawing?.physicalDevices.length ?? 0}` },
     { key: "review", label: "复核项目", description: `${reviewComponents.length} 个待确认项目` },
     { key: "bom", label: "初步 BOM", description: `${activeDrawing?.bomItems.length ?? 0} 个采购分组` },
     { key: "drawing", label: "图纸预览", description: "查看渲染后的图纸" },
@@ -457,6 +469,7 @@ export default function DrawingWorkspace() {
             view={resultView}
             drawing={activeDrawing}
             components={visibleComponents}
+            physicalDevices={activeDrawing.physicalDevices}
             reviewComponents={reviewComponents}
             selected={selectedComponent}
             onSelect={setSelectedComponent}
@@ -497,10 +510,11 @@ export default function DrawingWorkspace() {
   </main>;
 }
 
-function WorkspaceResult({ view, drawing, components, reviewComponents, selected, onSelect, onConfirm, onEdit, onRemove, onExport }: {
+function WorkspaceResult({ view, drawing, components, physicalDevices, reviewComponents, selected, onSelect, onConfirm, onEdit, onRemove, onExport }: {
   view: ResultView;
   drawing: Drawing;
   components: Component[];
+  physicalDevices: PhysicalDevice[];
   reviewComponents: Component[];
   selected: Component | null;
   onSelect: (component: Component) => void;
@@ -527,7 +541,7 @@ function WorkspaceResult({ view, drawing, components, reviewComponents, selected
   </>} />;
 
   if (view === "bom") return <Bubble placement="start" content={<>
-    <XMarkdown content={bomMarkdown(drawing.bomItems)} />
+    <XMarkdown content={bomMarkdown(drawing.bomItems, physicalDevices.length)} />
     <Actions items={[{ key: "export", label: "导出 Excel", icon: <ExportOutlined /> }, { key: "refresh", label: "重新生成", icon: <ReloadOutlined /> }]} onClick={({ key }) => { if (key === "export") onExport(); }} />
   </>} />;
 
@@ -538,7 +552,7 @@ function WorkspaceResult({ view, drawing, components, reviewComponents, selected
   </>} />;
 
   return <Bubble placement="start" content={<>
-    <XMarkdown content={formatCategorizedComponents(components)} />
+    <XMarkdown content={formatCategorizedComponents(components, { physicalDeviceCount: physicalDevices.length })} />
     <Prompts vertical title="选择元件查看证据" items={componentPrompts} onItemClick={({ data }) => { const component = components.find((item) => item.id === data.key); if (component) onSelect(component); }} />
     {selected && <><XMarkdown content={selectedMarkdown} /><Actions items={[{ key: "locate", label: "查看来源", icon: <EyeOutlined /> }, { key: "confirm", label: "确认", icon: <SafetyCertificateOutlined /> }, { key: "edit", label: "修改类别", icon: <EditOutlined /> }, { key: "remove", label: "移除", icon: <DeleteOutlined />, danger: true }]} onClick={({ key }) => { if (key === "confirm") onConfirm(); if (key === "edit") onEdit(); if (key === "remove") onRemove(); }} /></>}
   </>} />;

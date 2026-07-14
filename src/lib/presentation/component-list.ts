@@ -41,6 +41,8 @@ export type ComponentDisplayGroup = {
   components: DisplayComponent[];
 };
 
+export type ComponentListCounts = { physicalDeviceCount: number };
+
 export function groupComponentsForDisplay(components: DisplayComponent[]): ComponentDisplayGroup[] {
   const active = components.filter((component) => !component.removedAt && component.reviewStatus !== "removed");
   return COMPONENT_CATEGORIES.flatMap((category) => {
@@ -61,9 +63,11 @@ function reviewLabel(status: string) {
   return "需要工程师复核";
 }
 
-export function formatCategorizedComponents(components: DisplayComponent[]) {
+export function formatCategorizedComponents(components: DisplayComponent[], counts?: ComponentListCounts) {
   const groups = groupComponentsForDisplay(components);
-  if (!groups.length) return "### 元件识别结果\n\n未检测到可列出的电气元件。请由工程师检查图纸和识别范围。";
+  const activeCount = groups.reduce((count, group) => count + group.components.length, 0);
+  const countSummary = `符号实例：${activeCount}\n\n物理设备：${counts?.physicalDeviceCount ?? "待生成"}`;
+  if (!groups.length) return `### 符号清单\n\n${countSummary}\n\n未检测到可列出的电气元件。请由工程师检查图纸和识别范围。`;
   const sections = groups.map((group) => {
     const items = group.components.map((component, index) => {
       const identifier = component.tag?.trim() || component.temporaryId;
@@ -78,5 +82,5 @@ export function formatCategorizedComponents(components: DisplayComponent[]) {
     }).join("\n");
     return `#### ${group.label}（${group.components.length}）\n\n${items}`;
   });
-  return `### 元件识别结果（按类别）\n\n> 以下为初步识别结果，必须由电气工程师复核。\n\n${sections.join("\n\n")}`;
+  return `### 符号清单（按类别）\n\n${countSummary}\n\n> 元件识别结果（按类别）现按符号实例与物理设备分别统计；以下为初步识别结果，必须由电气工程师复核。\n\n${sections.join("\n\n")}`;
 }
