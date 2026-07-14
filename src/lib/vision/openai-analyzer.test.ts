@@ -25,24 +25,59 @@ const rendered: RenderedCadDrawing = {
   },
 };
 
-const validResult = {
+function resultFor(tileId: string, labels: string[]) {
+  return {
   drawingSummary: "可能为电气控制原理图",
-  components: [{
-    temporaryId: "detection-001",
-    category: "contactor",
-    label: "KM1",
-    description: "可能为接触器",
-    manufacturer: null,
-    modelNumber: null,
-    specifications: ["24VDC"],
-    confidence: 0.78,
-    tileId: "tile-1-1",
-    location: { x: 0.4, y: 0.3, width: 0.1, height: 0.08 },
-    evidence: ["附近文字 KM1"],
-    reviewRequired: true,
-  }],
+    components: labels.map((label, index) => ({
+      temporaryId: `detection-${index + 1}`,
+      category: "contactor" as const,
+      label,
+      description: "可能为接触器",
+      manufacturer: null,
+      modelNumber: null,
+      specifications: ["24VDC"],
+      confidence: 0.78,
+      tileId,
+      location: { x: 0.4, y: 0.3, width: 0.1, height: 0.08 },
+      evidence: [`附近文字 ${label}`],
+      reviewRequired: true,
+    })),
   warnings: ["初步 AI 分析，需要工程师复核"],
-};
+  };
+}
+
+const validResult = resultFor("tile-1-1", ["KM1"]);
+
+function inputWithTiles(count: number, entityCount = 1) {
+  const tiles = Array.from({ length: count }, (_, index) => ({
+    id: `tile-${index + 1}`,
+    imageUrl: "data:image/png;base64,dGlsZQ==",
+    x: index * 600,
+    y: 0,
+    width: 600,
+    height: 496,
+    overlap: 0,
+    cadBounds: { minX: index * 100, minY: 0, maxX: (index + 1) * 100, maxY: 80 },
+    entityCount,
+    textCount: 1,
+    blockCount: 0,
+  }));
+  return {
+    drawingId: "drawing-1",
+    sourcePath: "/private/drawing.dxf",
+    rendered: {
+      ...rendered,
+      tiles,
+      metadata: {
+        ...rendered.metadata,
+        context: {
+          ...rendered.metadata!.context!,
+          texts: tiles.map((tile, index) => ({ value: `T${index + 1}`, layer: "SYMBOL", handle: String(index + 1), position: { x: tile.cadBounds.minX + 10, y: 20 } })),
+        },
+      },
+    },
+  };
+}
 
 function modelResponse(result: unknown) {
   return new Response(JSON.stringify({ output: [{ content: [{ type: "output_text", text: typeof result === "string" ? result : JSON.stringify(result) }] }] }), {
@@ -79,12 +114,60 @@ describe("OpenAI drawing vision analyzer", () => {
     expect((requests[0].body.text as { format: { type: string } }).format.type).toBe("json_schema");
   });
 
-  it("retries one invalid model response and then reports a stable schema error", async () => {
+  it("enumerates each tile in a separate region-scoped request", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(modelResponse(resultFor("wrong-tile", ["QF1", "QF2"])))
+      .mockResolvedValueOnce(modelResponse(resultFor("wrong-tile", ["KM1"])));
+    const analyzer = createOpenAiVisionAnalyzer({ apiKey: "test-secret", fetchImpl, verificationEntityThreshold: 9999 });
+
+    const result = await analyzer.analyze(inputWithTiles(2));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result.components.map((item) => item.label)).toEqual(["QF1", "QF2", "KM1"]);
+    expect(result.components.map((item) => item.temporaryId)).toEqual(["tile-1-enumerate-1", "tile-1-enumerate-2", "tile-2-enumerate-1"]);
+    expect(result.components.map((item) => item.tileId)).toEqual(["tile-1", "tile-1", "tile-2"]);
+    expect(result.analysisDiagnostics.completedTiles).toBe(2);
+    expect(JSON.stringify(fetchImpl.mock.calls[0][1]?.body)).toContain("T1");
+    expect(JSON.stringify(fetchImpl.mock.calls[0][1]?.body)).not.toContain("T2");
+  });
+
+  it("runs a missed-candidate verification pass for dense tiles", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(modelResponse(resultFor("tile-1", ["QF1"])))
+      .mockResolvedValueOnce(modelResponse(resultFor("tile-1", ["QF2"])));
+    const analyzer = createOpenAiVisionAnalyzer({ apiKey: "test-secret", fetchImpl, verificationEntityThreshold: 100 });
+
+    const result = await analyzer.analyze(inputWithTiles(1, 300));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(fetchImpl.mock.calls[1][1]?.body)).toContain("QF1");
+    expect(result.analysisDiagnostics.verificationTiles).toBe(1);
+    expect(result.components.map((item) => item.label)).toEqual(["QF1", "QF2"]);
+  });
+
+  it("preserves successful tiles after a tile failure but reports a provider error when all tiles fail", async () => {
+    const partialFetch = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(modelResponse(resultFor("tile-1", ["QF1"])))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
+    const partialAnalyzer = createOpenAiVisionAnalyzer({ apiKey: "test-secret", fetchImpl: partialFetch, verificationEntityThreshold: 9999 });
+
+    const partial = await partialAnalyzer.analyze(inputWithTiles(2));
+
+    expect(partial.components.map((item) => item.label)).toEqual(["QF1"]);
+    expect(partial.analysisDiagnostics).toMatchObject({ attemptedTiles: 2, completedTiles: 1, failedTiles: 1 });
+    expect(partial.warnings.join("\n")).toContain("tile-2");
+
+    const failedFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response("unavailable", { status: 503 }));
+    const failedAnalyzer = createOpenAiVisionAnalyzer({ apiKey: "test-secret", fetchImpl: failedFetch, verificationEntityThreshold: 9999 });
+    await expect(failedAnalyzer.analyze(inputWithTiles(2))).rejects.toMatchObject({ code: "AI_PROVIDER_ERROR" });
+  });
+
+  it("retries one invalid model response and reports a provider error when every tile fails", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => modelResponse({ drawingSummary: "invalid", components: [{ category: "invented" }], warnings: [] }));
     const analyzer = createOpenAiVisionAnalyzer({ apiKey: "test-secret", fetchImpl });
 
     await expect(analyzer.analyze({ drawingId: "drawing-1", sourcePath: "/private/drawing.dxf", rendered }))
-      .rejects.toMatchObject({ code: "AI_RESPONSE_INVALID" });
+      .rejects.toMatchObject({ code: "AI_PROVIDER_ERROR" });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 

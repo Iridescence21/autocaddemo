@@ -32,7 +32,12 @@ function detection(overrides: Partial<VisionDetection>): VisionDetection {
 }
 
 function result(components: VisionDetection[]): ValidatedVisionResult {
-  return { drawingSummary: "电气控制图", components, warnings: [] };
+  return {
+    drawingSummary: "电气控制图",
+    components,
+    warnings: [],
+    analysisDiagnostics: { attemptedTiles: 0, completedTiles: 0, failedTiles: 0, verificationTiles: 0, rawDetectionCount: components.length, coverageLimited: false },
+  };
 }
 
 describe("vision detection consolidation", () => {

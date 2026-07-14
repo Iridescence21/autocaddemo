@@ -47,7 +47,19 @@ const fakeAnalyzer: DrawingVisionAnalyzer = {
       evidence: [index ? "线圈形状" : "附近文字 KM1"],
       reviewRequired: true,
     }));
-    return { drawingSummary: "可能为电气控制原理图", components: detections, warnings: ["初步结果，需要工程师复核"] };
+    return {
+      drawingSummary: "可能为电气控制原理图",
+      components: detections,
+      warnings: ["初步结果，需要工程师复核"],
+      analysisDiagnostics: {
+        attemptedTiles: rendered.tiles.length,
+        completedTiles: rendered.tiles.length,
+        failedTiles: 0,
+        verificationTiles: 0,
+        rawDetectionCount: detections.length,
+        coverageLimited: Boolean(rendered.metadata?.coverageLimited),
+      },
+    };
   },
 };
 

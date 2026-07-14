@@ -18,10 +18,20 @@ export type VisionDetection = {
   reviewRequired: boolean;
 };
 
+export type VisionAnalysisDiagnostics = {
+  attemptedTiles: number;
+  completedTiles: number;
+  failedTiles: number;
+  verificationTiles: number;
+  rawDetectionCount: number;
+  coverageLimited: boolean;
+};
+
 export type ValidatedVisionResult = {
   drawingSummary: string;
   components: VisionDetection[];
   warnings: string[];
+  analysisDiagnostics: VisionAnalysisDiagnostics;
 };
 
 export type DrawingVisionInput = {
