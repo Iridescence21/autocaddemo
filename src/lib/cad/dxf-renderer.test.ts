@@ -18,14 +18,16 @@ describe("DXF renderer", () => {
     expect(rendered.height).toBeGreaterThan(0);
   });
 
-  it("rasterizes one overview and four overlapping PNG tiles", async () => {
+  it("rasterizes one overview and occupied vector-backed PNG tiles", async () => {
     const rendered = await dxfRenderer.render({ drawingId: "drawing-real-dxf", sourcePath: fixture, sourceType: "dxf" });
 
     expect(rendered.overviewImageUrl).toMatch(/^data:image\/png;base64,/);
-    expect(rendered.tiles).toHaveLength(4);
-    expect(new Set(rendered.tiles.map((tile) => tile.id)).size).toBe(4);
+    expect(rendered.tiles.length).toBeGreaterThan(0);
     expect(rendered.tiles.every((tile) => tile.imageUrl.startsWith("data:image/png;base64,"))).toBe(true);
     expect(rendered.tiles.every((tile) => tile.overlap > 0)).toBe(true);
+    expect(rendered.tiles.every((tile) => tile.width > 0 && tile.height > 0)).toBe(true);
+    expect(rendered.tiles.every((tile) => tile.cadBounds && tile.entityCount > 0)).toBe(true);
+    expect(rendered.metadata?.coverageLimited).toBe(false);
     expect(rendered.metadata?.context?.texts.map((text) => text.value)).toContain("KM1");
   });
 });

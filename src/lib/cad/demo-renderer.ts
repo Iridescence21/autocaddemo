@@ -15,10 +15,10 @@ export const demoRenderer: CadRenderAdapter = {
       width: 1200,
       height: 720,
       tiles: [
-        { id: "tile-1", imageUrl: svgDataUrl("Tile 1"), x: 0, y: 0, width: 600, height: 400, overlap: 48 },
-        { id: "tile-2", imageUrl: svgDataUrl("Tile 2"), x: 552, y: 0, width: 648, height: 400, overlap: 48 },
-        { id: "tile-3", imageUrl: svgDataUrl("Tile 3"), x: 0, y: 352, width: 600, height: 368, overlap: 48 },
-        { id: "tile-4", imageUrl: svgDataUrl("Tile 4"), x: 552, y: 352, width: 648, height: 368, overlap: 48 },
+        { id: "tile-1", imageUrl: svgDataUrl("Tile 1"), x: 0, y: 0, width: 600, height: 400, overlap: 48, cadBounds: { minX: 0, minY: 320, maxX: 600, maxY: 720 }, entityCount: 1, textCount: 0, blockCount: 0 },
+        { id: "tile-2", imageUrl: svgDataUrl("Tile 2"), x: 552, y: 0, width: 648, height: 400, overlap: 48, cadBounds: { minX: 552, minY: 320, maxX: 1200, maxY: 720 }, entityCount: 1, textCount: 0, blockCount: 0 },
+        { id: "tile-3", imageUrl: svgDataUrl("Tile 3"), x: 0, y: 352, width: 600, height: 368, overlap: 48, cadBounds: { minX: 0, minY: 0, maxX: 600, maxY: 368 }, entityCount: 1, textCount: 0, blockCount: 0 },
+        { id: "tile-4", imageUrl: svgDataUrl("Tile 4"), x: 552, y: 352, width: 648, height: 368, overlap: 48, cadBounds: { minX: 552, minY: 0, maxX: 1200, maxY: 368 }, entityCount: 1, textCount: 0, blockCount: 0 },
       ],
       metadata: { layoutCount: 2, units: "millimeters" },
     };

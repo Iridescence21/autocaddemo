@@ -1,5 +1,5 @@
 import type { ComponentInput } from "@/lib/domain";
-import type { NormalizedDxfDrawing } from "@/lib/cad/dxf-types";
+import type { DxfExtents, NormalizedDxfDrawing } from "@/lib/cad/dxf-types";
 
 export type CadSourceType = "dwg" | "dxf";
 
@@ -11,6 +11,10 @@ export type CadDrawingTile = {
   width: number;
   height: number;
   overlap: number;
+  cadBounds: DxfExtents;
+  entityCount: number;
+  textCount: number;
+  blockCount: number;
 };
 
 export type RenderedCadDrawing = {
@@ -18,7 +22,7 @@ export type RenderedCadDrawing = {
   width: number;
   height: number;
   tiles: CadDrawingTile[];
-  metadata?: { layoutCount?: number; units?: string; context?: NormalizedDxfDrawing };
+  metadata?: { layoutCount?: number; units?: string; context?: NormalizedDxfDrawing; coverageLimited?: boolean };
 };
 
 export interface CadRenderAdapter {

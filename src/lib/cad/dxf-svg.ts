@@ -1,7 +1,7 @@
-import type { DxfPoint, NormalizedDxfDrawing, NormalizedDxfEntity } from "@/lib/cad/dxf-types";
+import type { DxfExtents, DxfPoint, NormalizedDxfDrawing, NormalizedDxfEntity } from "@/lib/cad/dxf-types";
 
 type Affine = [number, number, number, number, number, number];
-type SvgOptions = { maxWidth?: number; maxHeight?: number; padding?: number };
+export type SvgOptions = { maxWidth?: number; maxHeight?: number; padding?: number; viewport?: DxfExtents };
 export type DxfSvgRenderResult = { svg: string; width: number; height: number };
 
 const identity: Affine = [1, 0, 0, 1, 0, 0];
@@ -48,14 +48,15 @@ export function renderDxfSvg(drawing: NormalizedDxfDrawing, options: SvgOptions 
   const maxWidth = options.maxWidth ?? 2048;
   const maxHeight = options.maxHeight ?? 1536;
   const padding = options.padding ?? 48;
-  const cadWidth = Math.max(1, drawing.extents.maxX - drawing.extents.minX);
-  const cadHeight = Math.max(1, drawing.extents.maxY - drawing.extents.minY);
+  const viewport = options.viewport ?? drawing.extents;
+  const cadWidth = Math.max(1, viewport.maxX - viewport.minX);
+  const cadHeight = Math.max(1, viewport.maxY - viewport.minY);
   const scale = Math.max(0.01, Math.min((maxWidth - padding * 2) / cadWidth, (maxHeight - padding * 2) / cadHeight));
   const width = Math.max(1, Math.ceil(cadWidth * scale + padding * 2));
   const height = Math.max(1, Math.ceil(cadHeight * scale + padding * 2));
   const screen = (input: DxfPoint) => ({
-    x: padding + (input.x - drawing.extents.minX) * scale,
-    y: height - padding - (input.y - drawing.extents.minY) * scale,
+    x: padding + (input.x - viewport.minX) * scale,
+    y: height - padding - (input.y - viewport.minY) * scale,
   });
   const pointList = (points: DxfPoint[]) => points.map((item) => {
     const value = screen(item);

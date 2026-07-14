@@ -7,7 +7,7 @@ const rendered: RenderedCadDrawing = {
   width: 1200,
   height: 800,
   tiles: [
-    { id: "tile-1-1", imageUrl: "data:image/png;base64,dGlsZQ==", x: 0, y: 0, width: 696, height: 496, overlap: 96 },
+    { id: "tile-1-1", imageUrl: "data:image/png;base64,dGlsZQ==", x: 0, y: 0, width: 696, height: 496, overlap: 96, cadBounds: { minX: 0, minY: 0, maxX: 100, maxY: 80 }, entityCount: 1, textCount: 0, blockCount: 0 },
   ],
   metadata: {
     layoutCount: 1,

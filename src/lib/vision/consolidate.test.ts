@@ -8,8 +8,8 @@ const rendered: RenderedCadDrawing = {
   width: 1000,
   height: 800,
   tiles: [
-    { id: "tile-1-1", imageUrl: "data:image/png;base64,a", x: 0, y: 0, width: 600, height: 500, overlap: 100 },
-    { id: "tile-1-2", imageUrl: "data:image/png;base64,b", x: 400, y: 0, width: 600, height: 500, overlap: 100 },
+    { id: "tile-1-1", imageUrl: "data:image/png;base64,a", x: 0, y: 0, width: 600, height: 500, overlap: 100, cadBounds: { minX: 0, minY: 0, maxX: 600, maxY: 500 }, entityCount: 1, textCount: 0, blockCount: 0 },
+    { id: "tile-1-2", imageUrl: "data:image/png;base64,b", x: 400, y: 0, width: 600, height: 500, overlap: 100, cadBounds: { minX: 400, minY: 0, maxX: 1000, maxY: 500 }, entityCount: 1, textCount: 0, blockCount: 0 },
   ],
 };
 
