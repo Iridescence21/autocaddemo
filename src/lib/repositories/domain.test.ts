@@ -159,7 +159,7 @@ describe("drawing analysis persistence", () => {
       ],
     });
     await prisma.$transaction([
-      prisma.componentCandidate.updateMany({ where: { drawingId: drawing.id }, data: { physicalDeviceId: null, physicalDeviceDrawingId: null } }),
+      prisma.componentCandidate.updateMany({ where: { drawingId: drawing.id }, data: { physicalDeviceId: null } }),
       prisma.physicalDevice.deleteMany({ where: { drawingId: drawing.id } }),
     ]);
 
@@ -233,11 +233,11 @@ describe("drawing analysis persistence", () => {
 
     await expect(prisma.componentCandidate.update({
       where: { id: first.components[0].id },
-      data: { physicalDeviceId: second.physicalDevices[0].id, physicalDeviceDrawingId: drawingA.id },
+      data: { physicalDeviceId: second.physicalDevices[0].id },
     })).rejects.toThrow();
   });
 
-  it("keeps an occurrence when its physical device is directly deleted", async () => {
+  it("restricts direct device deletion until repository replacement unlinks occurrences", async () => {
     const conversation = await createConversation({ ownerScope: "demo-user", title: "Direct device deletion" });
     const drawing = await createDrawingUpload({
       conversationId: conversation.id,
@@ -252,10 +252,12 @@ describe("drawing analysis persistence", () => {
     const before = await getAnalysisSnapshot(drawing.id, "demo-user");
     if (!before?.physicalDevices[0]) throw new Error("physical device missing");
 
-    await prisma.physicalDevice.delete({ where: { id: before.physicalDevices[0].id } });
+    await expect(prisma.physicalDevice.delete({ where: { id: before.physicalDevices[0].id } })).rejects.toThrow();
+    await replacePhysicalDevices(drawing.id, "demo-user", []);
     const after = await getAnalysisSnapshot(drawing.id, "demo-user");
     expect(after?.components).toHaveLength(1);
-    expect(after?.components[0]).toMatchObject({ physicalDeviceId: null, physicalDeviceDrawingId: null });
+    expect(after?.components[0]?.physicalDeviceId).toBeNull();
+    expect(after?.physicalDevices).toHaveLength(0);
   });
 
   it("cascades drawing deletion through linked devices and occurrences", async () => {
