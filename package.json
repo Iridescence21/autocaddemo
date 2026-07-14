@@ -12,7 +12,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "worker": "tsx src/worker.ts",
-    "smoke:dxf": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-real-dxf.ts"
+    "smoke:dxf": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-real-dxf.ts",
+    "smoke:dwg": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-real-dwg.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
