@@ -43,7 +43,7 @@ export function readCadAnalysisTileConfig(environment: Record<string, string | u
     overlapRatio: boundedEnvironmentNumber(environment.CAD_ANALYSIS_TILE_OVERLAP_RATIO, DEFAULT_CAD_ANALYSIS_TILE_CONFIG.overlapRatio, 0, 0.5, false),
     targetEntitiesPerTile: boundedEnvironmentNumber(environment.CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE, DEFAULT_CAD_ANALYSIS_TILE_CONFIG.targetEntitiesPerTile, 1, 2000),
     renderConcurrency: boundedEnvironmentNumber(environment.CAD_ANALYSIS_TILE_RENDER_CONCURRENCY, DEFAULT_CAD_ANALYSIS_TILE_CONFIG.renderConcurrency, 1, 8),
-    renderTimeoutMs: boundedEnvironmentNumber(environment.CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS, DEFAULT_CAD_ANALYSIS_TILE_CONFIG.renderTimeoutMs, 100, 60000),
+    renderTimeoutMs: boundedEnvironmentNumber(environment.CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS, DEFAULT_CAD_ANALYSIS_TILE_CONFIG.renderTimeoutMs, 1000, 60000),
   };
 }
 
@@ -55,9 +55,18 @@ async function rasterizeSvg(svg: string) {
   return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
 }
 
+type RasterizeTile = (svg: string, tile: AnalysisTilePlan["tiles"][number], timeoutMs: number) => Promise<Buffer>;
+
+async function rasterizeTileSvg(svg: string, _tile: AnalysisTilePlan["tiles"][number], renderTimeoutMs: number) {
+  return sharp(Buffer.from(svg))
+    .png({ compressionLevel: 9 })
+    .timeout({ seconds: Math.max(1, Math.ceil(renderTimeoutMs / 1000)) })
+    .toBuffer();
+}
+
 type DxfRendererDependencies = {
   environment?: Record<string, string | undefined>;
-  rasterizeTile?: (svg: string, tile: AnalysisTilePlan["tiles"][number]) => Promise<Buffer>;
+  rasterizeTile?: RasterizeTile;
 };
 
 function tileCoordinates(tile: AnalysisTilePlan["tiles"][number], drawing: NormalizedDxfDrawing, height: number, overviewScale: number, overlapRatio: number): Omit<CadDrawingTile, "imageUrl"> {
@@ -77,65 +86,34 @@ async function renderPlannedTiles(
   height: number,
   overviewScale: number,
   config: CadAnalysisTileConfig,
-  rasterizeTile: NonNullable<DxfRendererDependencies["rasterizeTile"]>,
+  rasterizeTile: RasterizeTile,
 ) {
   if (!plan.tiles.length) return { tiles: [], failedTiles: 0 };
   const renderedTiles: Array<CadDrawingTile | undefined> = Array.from({ length: plan.tiles.length });
   let nextTile = 0;
-  let completedTiles = 0;
-  let activeRasters = 0;
   let failedTiles = 0;
 
-  await new Promise<void>((resolve) => {
-    const finishIfComplete = () => {
-      if (completedTiles === plan.tiles.length) resolve();
-    };
-    const startAvailableTiles = () => {
-      while (activeRasters < config.renderConcurrency && nextTile < plan.tiles.length) {
-        const index = nextTile;
-        nextTile += 1;
-        activeRasters += 1;
-        const tile = plan.tiles[index];
-        let outcomeReported = false;
-        const reportFailure = () => {
-          if (outcomeReported) return;
-          outcomeReported = true;
-          failedTiles += 1;
-          completedTiles += 1;
-          finishIfComplete();
-        };
-        const timeout = setTimeout(reportFailure, config.renderTimeoutMs);
-        (async () => {
-          const tileSvg = renderDxfSvg(context, { maxWidth: config.tilePixels, maxHeight: config.tilePixels, viewport: tile.cadBounds });
-          const image = await rasterizeTile(tileSvg.svg, tile);
-          return { ...tileCoordinates(tile, context, height, overviewScale, config.overlapRatio), imageUrl: dataUrl(image) };
-        })().then((rendered) => {
-          clearTimeout(timeout);
-          activeRasters -= 1;
-          if (!outcomeReported) {
-            outcomeReported = true;
-            renderedTiles[index] = rendered;
-            completedTiles += 1;
-          }
-          startAvailableTiles();
-          finishIfComplete();
-        }).catch(() => {
-          clearTimeout(timeout);
-          activeRasters -= 1;
-          reportFailure();
-          startAvailableTiles();
-          finishIfComplete();
-        });
+  const renderNextTile = async () => {
+    while (nextTile < plan.tiles.length) {
+      const index = nextTile;
+      nextTile += 1;
+      const tile = plan.tiles[index];
+      try {
+        const tileSvg = renderDxfSvg(context, { maxWidth: config.tilePixels, maxHeight: config.tilePixels, viewport: tile.cadBounds });
+        const image = await rasterizeTile(tileSvg.svg, tile, config.renderTimeoutMs);
+        renderedTiles[index] = { ...tileCoordinates(tile, context, height, overviewScale, config.overlapRatio), imageUrl: dataUrl(image) };
+      } catch {
+        failedTiles += 1;
       }
-    };
-    startAvailableTiles();
-  });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(config.renderConcurrency, plan.tiles.length) }, () => renderNextTile()));
 
   return { tiles: renderedTiles.filter((tile): tile is CadDrawingTile => Boolean(tile)), failedTiles };
 }
 
 export function createDxfRenderer(dependencies: DxfRendererDependencies = {}): CadRenderAdapter {
-  const rasterizeTile = dependencies.rasterizeTile ?? rasterizeSvg;
+  const rasterizeTile = dependencies.rasterizeTile ?? rasterizeTileSvg;
   return {
   async render(input) {
     if (input.sourceType !== "dxf") throw new Error("DXF_RENDERER_SOURCE_TYPE_MISMATCH");

@@ -6,10 +6,6 @@ import { createDxfRenderer, dxfRenderer, readCadAnalysisTileConfig } from "@/lib
 
 const fixture = resolve(process.cwd(), "fixtures/cad/synthetic-control-panel.dxf");
 
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-}
-
 describe("DXF renderer", () => {
   it("renders normalized geometry and escaped text to SVG", async () => {
     const drawing = await parseDxfFile(fixture);
@@ -45,17 +41,19 @@ describe("DXF renderer", () => {
       CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "999",
       CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "NaN",
     })).toEqual({ tilePixels: 4096, maxTiles: 1, overlapRatio: 0.5, targetEntitiesPerTile: 1, renderConcurrency: 8, renderTimeoutMs: 15000 });
+    expect(readCadAnalysisTileConfig({ CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "100" }).renderTimeoutMs).toBe(1000);
   });
 
-  it("keeps successful tiles and warns when a timed-out tile fails", async () => {
+  it("keeps successful tiles and warns when a native-bounded tile fails", async () => {
     const renderer = createDxfRenderer({
       environment: {
         CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE: "1",
-        CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "100",
+        CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "1000",
         CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "2",
       },
-      rasterizeTile: async (_svg, tile) => {
-        if (tile.id === "tile-1") return new Promise<Buffer>(() => undefined);
+      rasterizeTile: async (_svg, tile, timeoutMs) => {
+        expect(timeoutMs).toBe(1000);
+        if (tile.id === "tile-1") throw new Error("NATIVE_RASTER_TIMEOUT");
         return Buffer.from(tile.id);
       },
     });
@@ -77,41 +75,26 @@ describe("DXF renderer", () => {
     await expect(renderer.render({ drawingId: "drawing-total-failure", sourcePath: fixture, sourceType: "dxf" })).rejects.toThrow("DXF_ANALYSIS_TILE_RENDER_FAILED");
   });
 
-  it("retains a timed-out raster slot until its underlying operation settles", async () => {
-    let activeRasters = 0;
-    let maxActiveRasters = 0;
-    const releases = new Map<string, () => void>();
+  it("starts a queued tile after a timeout-aware raster rejects at concurrency one", async () => {
     const started: string[] = [];
     const renderer = createDxfRenderer({
       environment: {
         CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE: "1",
-        CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "2",
-        CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "100",
+        CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "1",
+        CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "1000",
       },
-      rasterizeTile: async (_svg, tile) => {
+      rasterizeTile: async (_svg, tile, timeoutMs) => {
         started.push(tile.id);
-        activeRasters += 1;
-        maxActiveRasters = Math.max(maxActiveRasters, activeRasters);
-        if (started.length <= 2) {
-          return new Promise<Buffer>((resolve) => releases.set(tile.id, () => {
-            activeRasters -= 1;
-            resolve(Buffer.from(tile.id));
-          }));
-        }
-        activeRasters -= 1;
+        expect(timeoutMs).toBe(1000);
+        if (tile.id === "tile-1") throw new Error("NATIVE_RASTER_TIMEOUT");
         return Buffer.from(tile.id);
       },
     });
 
-    const render = renderer.render({ drawingId: "drawing-retained-slot", sourcePath: fixture, sourceType: "dxf" });
-    while (started.length < 2) await delay(5);
-    await delay(125);
+    const rendered = await renderer.render({ drawingId: "drawing-queued-after-timeout", sourcePath: fixture, sourceType: "dxf" });
 
-    expect(started).toHaveLength(2);
-    expect(maxActiveRasters).toBe(2);
-    releases.get(started[0])?.();
-    releases.get(started[1])?.();
-    await render;
-    expect(maxActiveRasters).toBe(2);
+    expect(started.slice(0, 2)).toEqual(["tile-1", "tile-2"]);
+    expect(rendered.tiles.map((tile) => tile.id)).not.toContain("tile-1");
+    expect(rendered.metadata?.coverageLimited).toBe(true);
   });
 });
