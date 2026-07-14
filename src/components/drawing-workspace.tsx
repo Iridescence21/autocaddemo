@@ -370,6 +370,8 @@ export default function DrawingWorkspace() {
             header={senderHeader}
             prefix={<Button type="text" icon={<PaperClipOutlined />} aria-label="上传 DWG 或 DXF 图纸" onClick={() => setAttachmentsOpen((open) => !open)} />}
             allowSpeech
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            classNames={{ input: styles.senderInput }}
             placeholder={activeDrawing ? "询问图纸、筛选元件或修改识别结果" : "上传 DWG 或 DXF 图纸，或输入分析要求"}
             onChange={setSenderValue}
             onPasteFile={(files) => { const file = files.item(0); if (file) selectAttachment(file); }}

@@ -48,6 +48,16 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(styles).not.toContain(".composerFooter");
   });
 
+  it("keeps the official Sender compact and moves keyboard focus to its outer frame", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+    const styles = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.module.css"), "utf8");
+
+    expect(source).toContain("autoSize={{ minRows: 1, maxRows: 4 }}");
+    expect(source).toContain("classNames={{ input: styles.senderInput }}");
+    expect(styles).toContain(".senderInput:focus-visible");
+    expect(styles).toContain(":global(.ant-sender):has(.senderInput:focus-visible)");
+  });
+
   it("offers the complete component analysis as an Excel download", async () => {
     const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
     const inspector = await readFile(resolve(process.cwd(), "src/components/result-inspectors.tsx"), "utf8");
