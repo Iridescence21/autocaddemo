@@ -119,6 +119,21 @@
   font-weight: 700;
 }
 
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 2px;
+}
+
+.composerFooter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
 @media (max-width: 1180px) {
   .workspace,
   .workspaceNoInspector {
