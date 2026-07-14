@@ -1,130 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Actions, Attachments, Bubble, Conversations, FileCard, Prompts, Sender, ThoughtChain, Welcome } from "@ant-design/x";
-import type { AttachmentsProps, BubbleItemType, ConversationItemType } from "@ant-design/x";
+import { Prompts, Welcome } from "@ant-design/x";
+import type { ConversationItemType } from "@ant-design/x";
 import { useXConversations } from "@ant-design/x-sdk";
-import { XMarkdown } from "@ant-design/x-markdown";
-import { DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, PaperClipOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
+import { CloudUploadOutlined, FileSearchOutlined, SafetyCertificateOutlined, TableOutlined } from "@ant-design/icons";
+import { Tag } from "antd";
 import { parseDrawingCommand } from "@/lib/chat/commands";
 import { COMPONENT_CATEGORIES, type ComponentCategory } from "@/lib/domain";
-import { COMPONENT_CATEGORY_LABELS, formatCategorizedComponents, projectWorkspaceResultState } from "@/lib/presentation/component-list";
+import { COMPONENT_CATEGORY_LABELS } from "@/lib/presentation/component-list";
+import AnalysisComposer from "./analysis-composer";
 import ConversationSidebar from "./conversation-sidebar";
+import DrawingMessageList from "./drawing-message-list";
+import WorkspaceInspector from "./workspace-inspector";
 import WorkspaceShell from "./workspace-shell";
-
-type Component = {
-  id: string;
-  temporaryId: string;
-  category: string;
-  tag: string | null;
-  description: string;
-  specifications: unknown;
-  manufacturer: string | null;
-  modelNumber: string | null;
-  confidence: number;
-  evidence: unknown;
-  method: string;
-  reviewStatus: string;
-  physicalDeviceId?: string | null;
-  location: unknown;
-  removedAt: string | null;
-};
-
-type BomItem = {
-  id: string;
-  itemNumber: number;
-  category: string;
-  description: string;
-  manufacturer: string | null;
-  modelNumber: string | null;
-  specifications: unknown;
-  quantity: number;
-  confidence: number;
-  reviewStatus: string;
-};
-
-type PhysicalDevice = { id: string; temporaryId: string; tag: string | null; category: string; reviewStatus: string };
-
-type Drawing = {
-  id: string;
-  originalFilename: string;
-  sourceType: string;
-  byteSize: number;
-  status: string;
-  previewImageUrl?: string | null;
-  previewWidth?: number | null;
-  previewHeight?: number | null;
-  analysisJob?: { id: string; status: string; progress: number; stage: string; errorMessage?: string | null } | null;
-  components: Component[];
-  physicalDevices: PhysicalDevice[];
-  bomItems: BomItem[];
-};
-
-type Conversation = { id: string; title: string; status: string; updatedAt?: string; drawing?: Drawing | null };
-type MessageRecord = { id: string; type: string; role: string; payload: unknown; createdAt: string };
-type AttachmentItem = NonNullable<AttachmentsProps["items"]>[number];
-type ResultView = "drawing" | "components" | "bom" | "review";
+import type { AttachmentItem, Conversation, DrawingComponent, InspectorView, MessageRecord } from "./workspace-types";
+import styles from "./drawing-workspace.module.css";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-
-function messagePayload(message: MessageRecord) {
-  return (message.payload ?? {}) as Record<string, unknown>;
-}
-
-function stringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function visibleValue(value: string | null | undefined) {
-  return value?.trim() || "图纸中未显示";
-}
-
-function specifications(value: unknown) {
-  const items = stringArray(value);
-  return items.length ? items.join("；") : "图纸中未显示";
-}
-
-function messageToBubble(item: MessageRecord, progressComplete = false): BubbleItemType {
-  const data = messagePayload(item);
-  const resultState = projectWorkspaceResultState(data);
-  let content: React.ReactNode = null;
-  if (item.type === "text") content = <XMarkdown content={String(data.text ?? "")} />;
-  if (item.type === "file") {
-    content = <FileCard name={String(data.filename ?? "drawing.cad")} byte={Number(data.byteSize ?? 0)} type="file" description={`${String(data.sourceType ?? "CAD").toUpperCase()} · 文件已接收`} />;
-  }
-  if (item.type === "analysis_progress") {
-    const progress = Number(data.progress ?? 0);
-    content = <ThoughtChain items={[{
-      key: "progress",
-      title: String(data.stage ?? "正在处理"),
-      description: progressComplete ? "此阶段已完成" : `完成度 ${progress}%`,
-      status: data.status === "failed" ? "error" : progressComplete || progress === 100 ? "success" : "loading",
-      blink: !progressComplete && progress < 100,
-    }]} />;
-  }
-  if (item.type === "drawing_summary") {
-    const warnings = [...stringArray(data.warnings), ...(resultState.coverageLimited ? ["扫描区域受限，结果可能不完整"] : [])];
-    content = <XMarkdown content={`### 图纸概览\n\n${String(data.summary ?? "暂时无法生成图纸概览。")}\n\n> ${warnings.length ? warnings.join("；") : "初步识别结果必须由电气工程师复核。"}`} />;
-  }
-  if (item.type === "component_results") {
-    const markdown = typeof data.markdown === "string" ? data.markdown : `### 符号清单\n\n符号实例：${resultState.symbolOccurrenceCount}\n\n物理设备：${resultState.physicalDeviceCount}\n\n待复核：${resultState.requiresReview}\n\n未知符号：${resultState.unknown}`;
-    const coverageWarning = resultState.coverageLimited ? "\n\n> 扫描区域受限，结果可能不完整" : "";
-    content = <XMarkdown content={`${markdown}${coverageWarning}`} />;
-  }
-  if (item.type === "bom_results") {
-    content = <XMarkdown content={`### 初步 BOM 已生成\n\n共 **${String(data.itemCount ?? 0)}** 个采购分组，合计数量 **${String(data.totalQuantity ?? 0)}**。\n\n图纸中未显示的制造商和型号不会被猜测。`} />;
-  }
-  if (item.type === "export") content = <XMarkdown content={`### 导出完成\n\n文件 **${String(data.filename ?? "元件分析清单.xlsx")}** 已生成。`} />;
-  if (item.type === "error") content = <XMarkdown content={`### 分析失败\n\n${String(data.message ?? "处理未完成，请重试。")}\n\n可修正配置或文件后重新分析。`} />;
-  if (item.type === "review_request") content = <XMarkdown content={`### 需要工程师复核\n\n${Array.isArray(data.componentIds) ? data.componentIds.length : 0} 个元件等待确认。`} />;
-  return { key: item.id, role: item.role === "user" ? "user" : "ai", content, status: item.type === "error" ? "error" : "success" };
-}
-
-function bomMarkdown(items: BomItem[], physicalDeviceCount: number) {
-  if (!items.length) return "### 初步 BOM\n\n尚未生成采购清单。分析完成后可在这里生成 BOM。";
-  const rows = items.map((item) => `| ${item.itemNumber} | ${COMPONENT_CATEGORY_LABELS[item.category as ComponentCategory] ?? item.category} | ${item.description} | ${visibleValue(item.manufacturer)} | ${visibleValue(item.modelNumber)} | ${specifications(item.specifications)} | ${item.quantity} | ${Math.round(item.confidence * 100)}% | ${item.reviewStatus === "confirmed" ? "已确认" : "需要复核"} |`);
-  return `### 初步 BOM（按物理设备汇总）\n\n物理设备：${physicalDeviceCount}\n\n> 所有采购信息必须由电气工程师确认。\n\n| 项次 | 类别 | 描述 | 制造商 | 型号 | 规格 | 数量 | 置信度 | 状态 |\n| --- | --- | --- | --- | --- | --- | ---: | ---: | --- |\n${rows.join("\n")}`;
-}
 
 export default function DrawingWorkspace() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -134,10 +27,10 @@ export default function DrawingWorkspace() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
-  const [selectedComponent, setSelectedComponent] = useState<Component | null>(null);
+  const [selectedComponent, setSelectedComponent] = useState<DrawingComponent | null>(null);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [resultView, setResultView] = useState<ResultView>("components");
+  const [inspectorView, setInspectorView] = useState<InspectorView>("drawing");
   const xConversations = useXConversations({ defaultConversations: [] });
   const xConversationsRef = useRef(xConversations);
   const initializedRef = useRef(false);
@@ -179,6 +72,9 @@ export default function DrawingWorkspace() {
   const visibleComponents = useMemo(() => activeComponents.filter((component) => !filterCategory || component.category === filterCategory), [activeComponents, filterCategory]);
   const reviewComponents = useMemo(() => activeComponents.filter((component) => component.reviewStatus !== "confirmed" || component.category === "unknown"), [activeComponents]);
   const latestProgressId = [...messages].reverse().find((message) => message.type === "analysis_progress")?.id;
+  const visibleMessages = messages.filter((message) => message.type !== "analysis_progress" || message.id === latestProgressId);
+  const isProcessing = Boolean(activeDrawing?.analysisJob && ["queued", "converting", "analyzing"].includes(activeDrawing.analysisJob.status));
+
   const conversationItems: ConversationItemType[] = conversations.map((conversation) => ({
     key: conversation.id,
     label: conversation.drawing?.originalFilename ? `${conversation.title} · ${conversation.drawing.originalFilename}` : conversation.title,
@@ -192,6 +88,7 @@ export default function DrawingWorkspace() {
     setActiveId(data.conversation.id);
     setSnapshot(data.conversation);
     setMessages([]);
+    setInspectorView("drawing");
     return data.conversation.id;
   }
 
@@ -224,6 +121,12 @@ export default function DrawingWorkspace() {
     return false;
   }
 
+  function clearAttachment() {
+    setSelectedFile(null);
+    setAttachments([]);
+    setAttachmentError("");
+  }
+
   async function uploadIfNeeded(conversationId: string) {
     if (!selectedFile) return { drawingId: activeDrawing?.id ?? null, uploaded: false };
     const form = new FormData();
@@ -232,9 +135,8 @@ export default function DrawingWorkspace() {
     const response = await fetch("/api/drawings/upload", { method: "POST", body: form });
     const data = (await response.json()) as { drawingId?: string; message?: string };
     if (!response.ok || !data.drawingId) throw new Error(data.message ?? "图纸上传失败，请重试。");
-    setSelectedFile(null);
-    setAttachments([]);
-    setAttachmentError("");
+    clearAttachment();
+    setInspectorView("files");
     return { drawingId: data.drawingId, uploaded: true };
   }
 
@@ -242,12 +144,28 @@ export default function DrawingWorkspace() {
     await fetch(`/api/drawings/${drawingId}/bom`, { method: "POST" });
   }
 
+  async function downloadBom(drawingId: string) {
+    const response = await fetch(`/api/drawings/${drawingId}/exports`, { method: "POST" });
+    if (!response.ok) {
+      await appendText("Excel 元件清单导出失败，请稍后重试。", "assistant");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "元件分析清单.xlsx";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    await refresh();
+  }
+
   async function handleCommand(text: string, drawingId: string) {
     const command = parseDrawingCommand(text);
     if (!command) return false;
     if (command.type === "filter_components") {
       setFilterCategory(command.category);
-      setResultView("components");
+      setInspectorView("components");
       const count = activeComponents.filter((component) => component.category === command.category).length;
       await appendText(`已筛选“${COMPONENT_CATEGORY_LABELS[command.category]}”，共找到 ${count} 个。`, "assistant");
       return true;
@@ -256,7 +174,7 @@ export default function DrawingWorkspace() {
       const component = activeComponents.find((item) => item.tag?.toLowerCase() === command.tag.toLowerCase());
       if (component) {
         setSelectedComponent(component);
-        setResultView("components");
+        setInspectorView("components");
         await appendText(`已选择 ${command.tag}。当前分类：${COMPONENT_CATEGORY_LABELS[component.category as ComponentCategory] ?? component.category}；置信度：${Math.round(component.confidence * 100)}%。`, "assistant");
       } else await appendText(`未在当前图纸中找到 ${command.tag}。`, "assistant");
       return true;
@@ -282,7 +200,7 @@ export default function DrawingWorkspace() {
     if (command.type === "generate_bom") {
       await regenerateBom(drawingId);
       await appendText("已根据当前有效元件重新生成初步 BOM。所有采购信息仍需工程师确认。", "assistant");
-      setResultView("bom");
+      setInspectorView("bom");
       return true;
     }
     if (command.type === "export_bom") {
@@ -290,25 +208,9 @@ export default function DrawingWorkspace() {
       return true;
     }
     setFilterCategory(null);
-    setResultView("review");
+    setInspectorView("review");
     await appendText(`已打开复核清单，共 ${reviewComponents.length} 个项目。`, "assistant");
     return true;
-  }
-
-  async function downloadBom(drawingId: string) {
-    const response = await fetch(`/api/drawings/${drawingId}/exports`, { method: "POST" });
-    if (!response.ok) {
-      await appendText("Excel 元件清单导出失败，请稍后重试。", "assistant");
-      return;
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "元件分析清单.xlsx";
-    anchor.click();
-    URL.revokeObjectURL(url);
-    await refresh();
   }
 
   async function submit(text: string) {
@@ -338,6 +240,12 @@ export default function DrawingWorkspace() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function retryAnalysis() {
+    if (!activeDrawing) return;
+    await fetch(`/api/drawings/${activeDrawing.id}/analyze`, { method: "POST" });
+    await refresh();
   }
 
   async function renameActive() {
@@ -385,164 +293,96 @@ export default function DrawingWorkspace() {
   }
 
   const startPrompts = [
-    { key: "upload", label: "上传并分析图纸", description: "支持 DWG 演示文件和真实 ASCII DXF" },
-    { key: "identify", label: "识别全部电气元件", description: "按类别输出初步元件清单" },
-    { key: "bom", label: "生成初步 BOM", description: "不猜测图纸中未显示的产品信息" },
-    { key: "review", label: "查看复核规则", description: "所有 AI 结果都需要工程师确认" },
+    { key: "upload", icon: <CloudUploadOutlined />, label: "上传并分析图纸", description: "支持 DWG 和 ASCII DXF" },
+    { key: "identify", icon: <FileSearchOutlined />, label: "识别全部电气元件", description: "输出符号与物理设备" },
+    { key: "bom", icon: <TableOutlined />, label: "生成初步 BOM", description: "不猜测未显示的产品信息" },
+    { key: "review", icon: <SafetyCertificateOutlined />, label: "查看复核规则", description: "所有 AI 结果需要确认" },
   ];
   const followupPrompts = [
-    { key: "components", label: "符号清单", description: `符号实例 ${activeComponents.length} · 物理设备 ${activeDrawing?.physicalDevices.length ?? 0}` },
+    { key: "components", label: "符号清单", description: `${activeComponents.length} 个符号实例` },
     { key: "review", label: "复核项目", description: `${reviewComponents.length} 个待确认项目` },
     { key: "bom", label: "初步 BOM", description: `${activeDrawing?.bomItems.length ?? 0} 个采购分组` },
-    { key: "drawing", label: "图纸预览", description: "查看渲染后的图纸" },
+    { key: "files", label: "会话文件", description: "原图、分析产物和导出" },
   ];
-  const thoughtItems = activeDrawing?.analysisJob ? [{
-    key: "job",
-    title: activeDrawing.analysisJob.stage,
-    description: `完成度 ${activeDrawing.analysisJob.progress}%`,
-    status: (activeDrawing.analysisJob.status === "failed" ? "error" : activeDrawing.analysisJob.progress === 100 ? "success" : "loading") as "error" | "success" | "loading",
-  }] : [];
-  const isProcessing = Boolean(activeDrawing?.analysisJob && ["queued", "converting", "analyzing"].includes(activeDrawing.analysisJob.status));
-  const bubbles = messages
-    .filter((message) => message.type !== "analysis_progress" || message.id === latestProgressId)
-    .map((message) => messageToBubble(message, !isProcessing));
 
-  const attachmentTrigger = <Attachments
-    accept=".dwg,.dxf"
-    maxCount={1}
-    beforeUpload={(file) => selectAttachment(file)}
-    onRemove={() => { setSelectedFile(null); setAttachments([]); setAttachmentError(""); }}
-  ><PaperClipOutlined aria-label="上传 DWG 或 DXF 图纸" /></Attachments>;
-  const attachmentList = <Attachments
-    accept=".dwg,.dxf"
-    maxCount={1}
-    items={attachments}
-    overflow="scrollX"
-    onRemove={() => { setSelectedFile(null); setAttachments([]); setAttachmentError(""); }}
+  const sidebar = <ConversationSidebar
+    items={conversationItems}
+    activeKey={activeId}
+    onCreate={() => void newConversation()}
+    onActiveChange={(key) => {
+      setActiveId(key);
+      setSelectedComponent(null);
+      setFilterCategory(null);
+      setInspectorView("drawing");
+      xConversationsRef.current.setActiveConversationKey(key);
+    }}
+    onRename={() => void renameActive()}
+    onDelete={() => { if (window.confirm("确定删除此分析会话吗？")) void deleteActive(); }}
   />;
 
-  return <WorkspaceShell
-    sidebar={<ConversationSidebar
-      items={conversationItems}
-      activeKey={activeId}
-      onCreate={() => void newConversation()}
-      onActiveChange={(key) => { setActiveId(key); setSelectedComponent(null); setFilterCategory(null); xConversationsRef.current.setActiveConversationKey(key); }}
-      onRename={() => void renameActive()}
-      onDelete={() => { if (window.confirm("确定删除此分析会话吗？")) void deleteActive(); }}
-    />}
-  >
-    <section style={{ height: "100%", width: "100%", minWidth: 0, display: "flex", flexDirection: "column", boxSizing: "border-box", paddingBlock: 24, gap: 16, background: "#ffffff", color: "#1f1f1f" }}>
-      <Welcome
-        variant="borderless"
-        title={snapshot?.title ?? "新的图纸分析"}
-        description={activeDrawing ? `${activeDrawing.originalFilename} · ${activeDrawing.analysisJob?.stage ?? activeDrawing.status}` : "上传 DWG 或 DXF 图纸，然后用自然语言发起分析。"}
-        style={{ width: "100%", maxWidth: 700, margin: "0 auto" }}
-      />
+  const inspector = <WorkspaceInspector
+    activeView={inspectorView}
+    drawing={activeDrawing}
+    messages={messages}
+    components={visibleComponents}
+    reviewComponents={reviewComponents}
+    selected={selectedComponent}
+    onViewChange={(view) => { setInspectorView(view); if (view !== "components") setFilterCategory(null); }}
+    onSelect={setSelectedComponent}
+    onConfirm={() => void updateSelected({ reviewStatus: "confirmed" })}
+    onEdit={() => void editSelectedCategory()}
+    onRemove={() => void removeSelected()}
+    onRegenerate={() => { if (activeDrawing) void regenerateBom(activeDrawing.id).then(() => refresh()); }}
+    onExport={() => { if (activeDrawing) void downloadBom(activeDrawing.id); }}
+  />;
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", background: "#ffffff" }}>
-        <div style={{ width: "100%", maxWidth: 700, margin: "0 auto", padding: "8px 0 24px" }}>
-          {!messages.length ? <>
-            <Welcome
-              title="上传图纸，开始分析"
-              description="AI 将生成按类别整理的元件清单、复核项目和初步 BOM。系统不会猜测图纸中未显示的制造商、型号或规格。"
-              style={{ paddingTop: 32 }}
-            />
-            <Prompts title="可以这样开始" wrap items={startPrompts} onItemClick={({ data }) => {
-              if (data.key === "upload") return;
-              void submit(data.key === "identify" ? "分析这张图纸，并按类别列出所有可识别的电气元件。" : data.key === "bom" ? "生成初步 BOM" : "显示需要工程师复核的项目");
-            }} />
-          </> : <Bubble.List items={bubbles} autoScroll role={{ user: { placement: "end" }, ai: { placement: "start" } }} />}
+  return (
+    <WorkspaceShell sidebar={sidebar} inspector={inspector}>
+      <div className={styles.centerWorkspace}>
+        <header className={styles.centerHeader}>
+          <div>
+            <h2>{snapshot?.title ?? "新的图纸分析"}</h2>
+            <p>{activeDrawing ? activeDrawing.originalFilename : "上传图纸并用自然语言开始工程分析"}</p>
+          </div>
+          <Tag color={isProcessing ? "processing" : activeDrawing ? "success" : "default"}>
+            {isProcessing ? activeDrawing?.analysisJob?.stage : activeDrawing ? "会话就绪" : "等待图纸"}
+          </Tag>
+        </header>
 
-          {isProcessing && <ThoughtChain items={thoughtItems} />}
-          {activeDrawing && !isProcessing && <WorkspaceResult
-            view={resultView}
-            drawing={activeDrawing}
-            components={visibleComponents}
-            physicalDevices={activeDrawing.physicalDevices}
-            reviewComponents={reviewComponents}
-            selected={selectedComponent}
-            onSelect={setSelectedComponent}
-            onConfirm={() => void updateSelected({ reviewStatus: "confirmed" })}
-            onEdit={() => void editSelectedCategory()}
-            onRemove={() => void removeSelected()}
-            onExport={() => void downloadBom(activeDrawing.id)}
-          />}
+        <div className={styles.chatScroll}>
+          <div className={styles.chatContent}>
+            {!visibleMessages.length ? (
+              <div className={styles.emptyWorkspace}>
+                <Welcome
+                  variant="borderless"
+                  title="上传图纸，开始专业分析"
+                  description="AI 将整理符号实例、物理设备、工程复核项和初步 BOM；图纸中未显示的信息不会被猜测。"
+                />
+                <Prompts title="可以这样开始" wrap items={startPrompts} onItemClick={({ data }) => {
+                  if (data.key === "upload") return;
+                  void submit(data.key === "identify" ? "分析这张图纸，并按类别列出所有可识别的电气元件。" : data.key === "bom" ? "生成初步 BOM" : "显示需要工程师复核的项目");
+                }} />
+              </div>
+            ) : (
+              <DrawingMessageList messages={visibleMessages} onOpenInspector={setInspectorView} onRetry={() => void retryAnalysis()} />
+            )}
+          </div>
         </div>
+
+        <footer className={styles.composerDock}>
+          {activeDrawing ? <Prompts className={styles.followupPrompts} wrap items={followupPrompts} onItemClick={({ data }) => { setFilterCategory(null); setInspectorView(data.key as InspectorView); }} /> : null}
+          <AnalysisComposer
+            attachments={attachments}
+            attachmentError={attachmentError}
+            loading={loading}
+            hasDrawing={Boolean(activeDrawing)}
+            onSelectFile={selectAttachment}
+            onRemoveFile={clearAttachment}
+            onSubmit={(text) => void submit(text)}
+            onCancel={() => { setLoading(false); if (activeId) void appendText("已停止等待当前响应；已提交的后台分析任务仍会继续。", "assistant"); }}
+          />
+        </footer>
       </div>
-
-      <div style={{ width: "100%", maxWidth: 700, margin: "0 auto" }}>
-        {activeDrawing && <Prompts wrap items={followupPrompts} onItemClick={({ data }) => { setFilterCategory(null); setResultView(data.key as ResultView); }} />}
-        <Sender
-          header={<Sender.Header
-            open={attachments.length > 0}
-            onOpenChange={(open) => {
-              if (!open) {
-                setSelectedFile(null);
-                setAttachments([]);
-                setAttachmentError("");
-              }
-            }}
-          >
-            {attachmentList}
-            {attachmentError && <Bubble content={`错误：${attachmentError}`} variant="borderless" />}
-          </Sender.Header>}
-          loading={loading}
-          autoSize={{ minRows: 1, maxRows: 6 }}
-          onSubmit={(text) => void submit(text)}
-          onCancel={() => { setLoading(false); if (activeId) void appendText("已停止等待当前响应；已提交的后台分析任务仍会继续。", "assistant"); }}
-          onPasteFile={(files) => { const file = files.item(0); if (file) selectAttachment(file, "paste"); }}
-          placeholder={activeDrawing ? "询问图纸、筛选元件或修改识别结果…" : "上传 DWG 或 DXF 图纸，或输入分析要求…"}
-          prefix={attachmentTrigger}
-        />
-      </div>
-    </section>
-  </WorkspaceShell>;
-}
-
-function WorkspaceResult({ view, drawing, components, physicalDevices, reviewComponents, selected, onSelect, onConfirm, onEdit, onRemove, onExport }: {
-  view: ResultView;
-  drawing: Drawing;
-  components: Component[];
-  physicalDevices: PhysicalDevice[];
-  reviewComponents: Component[];
-  selected: Component | null;
-  onSelect: (component: Component) => void;
-  onConfirm: () => void;
-  onEdit: () => void;
-  onRemove: () => void;
-  onExport: () => void;
-}) {
-  const componentPrompts = components.map((component) => ({
-    key: component.id,
-    label: `${component.tag ?? component.temporaryId} · ${COMPONENT_CATEGORY_LABELS[component.category as ComponentCategory] ?? component.category}`,
-    description: `${Math.round(component.confidence * 100)}% · ${component.reviewStatus === "confirmed" ? "已确认" : "需要复核"}`,
-  }));
-  const reviewPrompts = reviewComponents.map((component) => ({
-    key: component.id,
-    label: `${component.tag ?? component.temporaryId} · ${COMPONENT_CATEGORY_LABELS[component.category as ComponentCategory] ?? component.category}`,
-    description: component.category === "unknown" ? "未知元件，需要工程师分类" : `置信度 ${Math.round(component.confidence * 100)}%`,
-  }));
-  const selectedMarkdown = selected ? `### ${selected.tag ?? selected.temporaryId}\n\n- 类别：${COMPONENT_CATEGORY_LABELS[selected.category as ComponentCategory] ?? selected.category}\n- 描述：${selected.description}\n- 规格：${specifications(selected.specifications)}\n- 制造商：${visibleValue(selected.manufacturer)}\n- 型号：${visibleValue(selected.modelNumber)}\n- 置信度：${Math.round(selected.confidence * 100)}%\n- 识别方法：${selected.method}\n- 状态：${selected.reviewStatus === "confirmed" ? "已由工程师确认" : "需要工程师复核"}\n- 证据：${stringArray(selected.evidence).join("；") || "无可显示证据"}` : "";
-
-  if (view === "drawing") return <Bubble placement="start" content={<>
-    <FileCard name={drawing.originalFilename} type="image" src={drawing.previewImageUrl ?? undefined} description={drawing.previewImageUrl ? `${drawing.previewWidth ?? "?"}×${drawing.previewHeight ?? "?"} 图纸预览` : "尚未生成图纸预览"} />
-    <ThoughtChain items={[{ key: "preview", title: drawing.previewImageUrl ? "图纸预览已生成" : "等待图纸预览", description: "标记位置来自 DXF 渲染坐标；演示结果需要工程师复核。", status: drawing.previewImageUrl ? "success" : "loading" }]} />
-  </>} />;
-
-  if (view === "bom") return <Bubble placement="start" content={<>
-    <XMarkdown content={bomMarkdown(drawing.bomItems, physicalDevices.length)} />
-    <Actions items={[{ key: "export", label: "导出 Excel", icon: <ExportOutlined /> }, { key: "refresh", label: "重新生成", icon: <ReloadOutlined /> }]} onClick={({ key }) => { if (key === "export") onExport(); }} />
-  </>} />;
-
-  if (view === "review") return <Bubble placement="start" content={<>
-    <XMarkdown content={`### 工程师复核清单\n\n共 **${reviewComponents.length}** 个项目需要确认。未知元件、低置信度项目和未确认的 AI 结果都列在这里。`} />
-    <Prompts vertical items={reviewPrompts} onItemClick={({ data }) => { const component = reviewComponents.find((item) => item.id === data.key); if (component) onSelect(component); }} />
-    {selected && <><XMarkdown content={selectedMarkdown} /><Actions items={[{ key: "confirm", label: "确认", icon: <SafetyCertificateOutlined /> }, { key: "edit", label: "修改类别", icon: <EditOutlined /> }, { key: "remove", label: "移除", icon: <DeleteOutlined />, danger: true }]} onClick={({ key }) => { if (key === "confirm") onConfirm(); if (key === "edit") onEdit(); if (key === "remove") onRemove(); }} /></>}
-  </>} />;
-
-  return <Bubble placement="start" content={<>
-    <XMarkdown content={formatCategorizedComponents(components, { physicalDeviceCount: physicalDevices.length })} />
-    <Prompts vertical title="选择元件查看证据" items={componentPrompts} onItemClick={({ data }) => { const component = components.find((item) => item.id === data.key); if (component) onSelect(component); }} />
-    {selected && <><XMarkdown content={selectedMarkdown} /><Actions items={[{ key: "locate", label: "查看来源", icon: <EyeOutlined /> }, { key: "confirm", label: "确认", icon: <SafetyCertificateOutlined /> }, { key: "edit", label: "修改类别", icon: <EditOutlined /> }, { key: "remove", label: "移除", icon: <DeleteOutlined />, danger: true }]} onClick={({ key }) => { if (key === "confirm") onConfirm(); if (key === "edit") onEdit(); if (key === "remove") onRemove(); }} /></>}
-  </>} />;
+    </WorkspaceShell>
+  );
 }

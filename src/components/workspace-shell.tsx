@@ -26,11 +26,11 @@ export default function WorkspaceShell({ sidebar, inspector, children }: { sideb
         ) : null}
       </div>
 
-      <Drawer title="分析会话" placement="left" width={300} open={leftOpen} onClose={() => setLeftOpen(false)} styles={{ body: { padding: 0 } }}>
+      <Drawer title="分析会话" placement="left" size={300} open={leftOpen} onClose={() => setLeftOpen(false)} styles={{ body: { padding: 0 } }}>
         {sidebar}
       </Drawer>
       {inspector ? (
-        <Drawer title="工程详情" placement="right" width={380} open={rightOpen} onClose={() => setRightOpen(false)} styles={{ body: { padding: 0 } }}>
+        <Drawer title="工程详情" placement="right" size={380} open={rightOpen} onClose={() => setRightOpen(false)} styles={{ body: { padding: 0 } }}>
           {inspector}
         </Drawer>
       ) : null}

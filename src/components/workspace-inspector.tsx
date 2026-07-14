@@ -45,7 +45,7 @@ export default function WorkspaceInspector({ activeView, drawing, messages, comp
         <strong>工程详情</strong>
         <span>{drawing?.originalFilename ?? "当前会话"}</span>
       </header>
-      <Tabs className={styles.inspectorTabs} activeKey={activeView} onChange={(key) => onViewChange(key as InspectorView)} items={items} size="small" />
+      <Tabs className={styles.inspectorTabs} activeKey={activeView} onChange={(key) => onViewChange(key as InspectorView)} items={items} size="small" tabBarGutter={8} />
     </div>
   );
 }
