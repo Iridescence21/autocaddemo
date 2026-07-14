@@ -24,7 +24,7 @@ export type DwgConverterOptions = {
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 60000;
-const DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024 * 1024;
+const DEFAULT_MAX_OUTPUT_BYTES = 100 * 1024 * 1024;
 
 function createConversionError(code: string): Error {
   return new Error(code);

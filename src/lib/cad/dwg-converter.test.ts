@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { join, parse } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -31,6 +31,25 @@ describe("createLibreDwgConverter", () => {
         options: { cwd: directory, timeout: 60000, maxBuffer: 1024 * 1024 },
       }]);
       await expect(readFile(result, "utf8")).resolves.toContain("ASCII DXF");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows the default 100 MiB output limit", async () => {
+    const directory = await makeTempDirectory();
+    const sourcePath = join(directory, "panel.dwg");
+    const outputPath = join(directory, "panel.dxf");
+    await writeFile(sourcePath, "DWG");
+
+    try {
+      const runner: DwgProcessRunner = async () => {
+        await writeFile(outputPath, "");
+        await truncate(outputPath, 100 * 1024 * 1024);
+      };
+
+      await expect(createLibreDwgConverter({ runner }).convert({ sourcePath, outputDir: directory }))
+        .resolves.toBe(outputPath);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
