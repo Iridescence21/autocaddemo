@@ -43,6 +43,33 @@ export type ComponentDisplayGroup = {
 
 export type ComponentListCounts = { physicalDeviceCount: number };
 
+export function projectWorkspaceResultState(input: {
+  symbolOccurrenceCount?: unknown;
+  total?: unknown;
+  physicalDeviceCount?: unknown;
+  requiresReview?: unknown;
+  unknown?: unknown;
+  analysisDiagnostics?: unknown;
+}) {
+  const diagnostics = input.analysisDiagnostics && typeof input.analysisDiagnostics === "object"
+    ? input.analysisDiagnostics as Record<string, unknown>
+    : {};
+  return {
+    symbolOccurrenceCount: numberValue(input.symbolOccurrenceCount ?? input.total),
+    physicalDeviceCount: numberValue(input.physicalDeviceCount),
+    requiresReview: numberValue(input.requiresReview),
+    unknown: numberValue(input.unknown),
+    coverageLimited: diagnostics.coverageLimited === true
+      || numberValue(diagnostics.failedTiles) > 0
+      || numberValue(diagnostics.completedTiles) < numberValue(diagnostics.attemptedTiles),
+  };
+}
+
+function numberValue(value: unknown) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 export function groupComponentsForDisplay(components: DisplayComponent[]): ComponentDisplayGroup[] {
   const active = components.filter((component) => !component.removedAt && component.reviewStatus !== "removed");
   return COMPONENT_CATEGORIES.flatMap((category) => {

@@ -6,7 +6,7 @@ import { resetTestDatabase } from "@/lib/db";
 import { demoAnalyzer } from "@/lib/cad/demo-analyzer";
 import { demoRenderer } from "@/lib/cad/demo-renderer";
 import { getCadRenderer } from "@/lib/cad/registry";
-import { describeAnalysisFailure, persistAnalysisFailure, runDemoAnalysis, runDrawingAnalysis, selectDefaultAdapters } from "@/lib/analysis/service";
+import { describeAnalysisFailure, hasLimitedCoverage, persistAnalysisFailure, runDemoAnalysis, runDrawingAnalysis, selectDefaultAdapters } from "@/lib/analysis/service";
 import { openAiVisionAnalyzer } from "@/lib/vision/openai-analyzer";
 import { createConversation } from "@/lib/repositories/conversations";
 import { createDrawingUpload, getAnalysisSnapshot, updateAnalysisStatus } from "@/lib/repositories/drawings";
@@ -59,8 +59,39 @@ const partialCoverageAnalyzer: DrawingVisionAnalyzer = {
   },
 };
 
+const confirmedDemoAnalyzer = {
+  async analyze() {
+    return {
+      drawingSummary: "确认的局部区域",
+      components: [{
+        temporaryId: "QF1",
+        category: "circuit_breaker" as const,
+        tag: "QF1",
+        description: "断路器",
+        manufacturer: null,
+        modelNumber: null,
+        specifications: ["16A"],
+        confidence: 0.99,
+        evidence: ["fixture"],
+        method: "fixture",
+        reviewStatus: "confirmed" as const,
+        location: { x: 0.1, y: 0.1, width: 0.1, height: 0.1 },
+      }],
+      warnings: [],
+    };
+  },
+};
+
 describe("demo analysis service", () => {
   beforeEach(async () => resetTestDatabase());
+
+  it.each([
+    { attemptedTiles: 2, completedTiles: 2, failedTiles: 0, coverageLimited: true },
+    { attemptedTiles: 2, completedTiles: 1, failedTiles: 1, coverageLimited: false },
+    { attemptedTiles: 3, completedTiles: 2, failedTiles: 0, coverageLimited: false },
+  ])("treats limited, failed, and incomplete diagnostics as coverage-limited", (diagnostics) => {
+    expect(hasLimitedCoverage({ ...diagnostics, verificationTiles: 0, rawDetectionCount: 0 })).toBe(true);
+  });
 
   it("selects vision adapters for DXF drawings", async () => {
     const adapters = await selectDefaultAdapters("dxf", resolve(process.cwd(), "fixtures/cad/synthetic-control-panel.dxf"));
@@ -172,6 +203,31 @@ describe("demo analysis service", () => {
     expect(messages.find((message) => message.type === "drawing_summary")?.payload).toMatchObject({
       warnings: expect.arrayContaining([expect.stringContaining("部分区域未完整扫描")]),
     });
+  });
+
+  it("requires review when coverage is limited even if every occurrence is confirmed", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Confirmed partial coverage" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "confirmed-partial.dwg",
+      safeFilename: "confirmed-partial.dwg",
+      storageKey: "fixtures/cad/control-panel-a.dwg",
+      sourceType: "dwg",
+      byteSize: 128,
+    });
+
+    const result = await runDrawingAnalysis(drawing.id, "demo-user", {
+      renderer: partialCoverageRenderer,
+      analyzer: confirmedDemoAnalyzer,
+      analysisMode: "demo",
+      sourcePathResolver: () => "fixtures/cad/control-panel-a.dwg",
+      delayMs: 0,
+    });
+
+    expect(result.components.every((component) => component.reviewStatus === "confirmed")).toBe(true);
+    expect(result.analysisDiagnostics.coverageLimited).toBe(true);
+    expect(result.status).toBe("requires_review");
   });
 
   it("preserves the latest job progress when a background analysis fails", async () => {

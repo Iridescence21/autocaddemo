@@ -77,7 +77,7 @@ function analysisDiagnosticsFrom(mode: AnalysisMode, analysis: AnalyzerResult, r
   };
 }
 
-function hasLimitedCoverage(diagnostics: VisionAnalysisDiagnostics) {
+export function hasLimitedCoverage(diagnostics: VisionAnalysisDiagnostics) {
   return diagnostics.coverageLimited || diagnostics.failedTiles > 0 || diagnostics.completedTiles < diagnostics.attemptedTiles;
 }
 
@@ -212,7 +212,7 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
     type: "bom_results",
     payload: { drawingId, physicalDeviceCount: physicalDevices.length, itemCount: bom?.items.length ?? 0, totalQuantity: bom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0 },
   });
-  const finalStatus = reviewCount || unknownCount || components.length === 0 ? "requires_review" : "completed";
+  const finalStatus = reviewCount || unknownCount || components.length === 0 || hasLimitedCoverage(analysisDiagnostics) ? "requires_review" : "completed";
   await updateAnalysisStatus(drawingId, ownerScope, { status: finalStatus, progress: 100, stage: "分析完成" });
   return { status: finalStatus, components, physicalDevices, bomItems: bom?.items ?? [], analysisDiagnostics };
 }

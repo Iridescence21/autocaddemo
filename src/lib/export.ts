@@ -85,7 +85,7 @@ function locationValues(value: unknown) {
 }
 
 function csvCell(value: unknown) {
-  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+  return `"${safeExcelText(value, "").replaceAll('"', '""')}"`;
 }
 
 export function bomToCsv(rows: BomExportRow[]) {
@@ -112,17 +112,18 @@ export function buildComponentWorkbook(input: {
   workbook.subject = "初步电气元件分析结果（需要工程师复核）";
 
   const sheet = workbook.addWorksheet("元件分析清单", {
-    views: [{ state: "frozen", ySplit: 5 }],
+    views: [{ state: "frozen", ySplit: 6 }],
     properties: { defaultRowHeight: 22 },
   });
   const occurrenceHeaders = ["序号", "符号实例 ID", "标签", "类别", "描述", "规格", "制造商", "型号", "物理设备 ID", "物理设备标签", "置信度", "复核状态", "识别方法", "识别证据", "来源区域", "位置 X", "位置 Y", "宽度", "高度", "原始类别", "修正类别", "是否移除", "图纸 ID", "图纸文件"];
-  const deviceHeaders = ["物理设备 ID", "物理设备标签", "类别", "描述", "制造商", "型号", "规格", "关联符号数量", "采购数量", "置信度", "复核状态", "识别证据"];
+  const deviceHeaders = ["BOM ID", "项次", "物理设备 ID", "物理设备标签", "类别", "描述", "制造商", "型号", "规格", "关联符号数量", "采购数量", "置信度", "复核状态", "识别证据"];
   const widths = [8, 24, 16, 22, 30, 24, 20, 20, 24, 18, 12, 22, 18, 40, 18, 12, 12, 12, 12, 18, 18, 12, 24, 28];
   widths.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
   sheet.getCell("A1").value = "符号实例清单";
   sheet.getCell("A2").value = `图纸：${safeExcelText(input.filename)}`;
-  sheet.getCell("A3").value = input.analysisWarnings.length ? input.analysisWarnings.map((warning) => safeExcelText(warning)).join("；") : "初步识别结果必须由电气工程师复核。";
-  sheet.getRow(5).values = occurrenceHeaders;
+  sheet.getCell("A3").value = "初步识别结果必须由电气工程师复核。";
+  sheet.getCell("A4").value = input.analysisWarnings.length ? input.analysisWarnings.map((warning) => safeExcelText(warning)).join("；") : "无额外分析/覆盖提示。";
+  sheet.getRow(6).values = occurrenceHeaders;
   const devicesById = new Map(input.physicalDevices.map((device) => [device.id, device]));
 
   input.components.forEach((component, index) => {
@@ -139,26 +140,30 @@ export function buildComponentWorkbook(input: {
     ]);
   });
 
-  styleHeader(sheet.getRow(5));
-  sheet.autoFilter = { from: "A5", to: `X${Math.max(5 + input.components.length, 5)}` };
+  styleHeader(sheet.getRow(6));
+  sheet.autoFilter = { from: "A6", to: `X${Math.max(6 + input.components.length, 6)}` };
 
-  for (let rowNumber = 6; rowNumber <= 5 + input.components.length; rowNumber += 1) {
+  for (let rowNumber = 7; rowNumber <= 6 + input.components.length; rowNumber += 1) {
     const row = sheet.getRow(rowNumber);
     styleDataRow(row, 11, rowNumber);
   }
 
-  const deviceTitleRow = 5 + input.components.length + 3;
+  const deviceTitleRow = 6 + input.components.length + 3;
   sheet.getCell(deviceTitleRow, 1).value = "物理设备与初步 BOM";
   sheet.getRow(deviceTitleRow + 1).values = deviceHeaders;
   styleHeader(sheet.getRow(deviceTitleRow + 1));
-  input.physicalDevices.forEach((device, index) => {
-    const linkedSymbols = input.components.filter((component) => component.physicalDeviceId === device.id && !component.removedAt).length;
-    const bomItem = findBomItem(device, input.bomItems);
+  input.bomItems.forEach((bomItem, index) => {
+    const devices = input.physicalDevices.filter((device) => matchesBomItem(device, bomItem));
+    const linkedSymbols = input.components.filter((component) => devices.some((device) => component.physicalDeviceId === device.id) && !component.removedAt).length;
     const row = sheet.addRow([
-      safeExcelText(device.temporaryId), safeExcelText(device.tag), safeExcelText(COMPONENT_CATEGORY_LABELS[device.category as ComponentCategory] ?? device.category), safeExcelText(device.description), safeExcelText(device.manufacturer), safeExcelText(device.modelNumber),
-      stringValues(device.specifications).join("；") || "图纸中未显示", linkedSymbols, bomItem?.quantity ?? device.quantity, device.confidence, reviewLabel(device.reviewStatus), stringValues(device.evidence).join("；") || "图纸中未显示",
+      safeExcelText(bomItem.id), bomItem.itemNumber,
+      devices.map((device) => safeExcelText(device.temporaryId)).join("；") || "图纸中未显示",
+      devices.map((device) => safeExcelText(device.tag)).join("；") || "图纸中未显示",
+      safeExcelText(COMPONENT_CATEGORY_LABELS[bomItem.category as ComponentCategory] ?? bomItem.category), safeExcelText(bomItem.description), safeExcelText(bomItem.manufacturer), safeExcelText(bomItem.modelNumber),
+      stringValues(bomItem.specifications).join("；") || "图纸中未显示", linkedSymbols, bomItem.quantity, bomItem.confidence, reviewLabel(bomItem.reviewStatus),
+      [...new Set(devices.flatMap((device) => stringValues(device.evidence)))].join("；") || "图纸中未显示",
     ]);
-    styleDataRow(row, 10, index + deviceTitleRow + 2);
+    styleDataRow(row, 12, index + deviceTitleRow + 2);
   });
 
   return workbook;
@@ -177,7 +182,7 @@ function styleDataRow(row: ExcelJS.Row, confidenceColumn: number, rowNumber: num
   if (rowNumber % 2 === 0) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7F9FC" } };
 }
 
-function findBomItem(device: PhysicalDeviceExportRow, bomItems: BomExportRow[]) {
-  const deviceKey = JSON.stringify([device.category, device.description, device.manufacturer, device.modelNumber, device.specifications]);
-  return bomItems.find((item) => JSON.stringify([item.category, item.description, item.manufacturer, item.modelNumber, item.specifications]) === deviceKey);
+function matchesBomItem(device: PhysicalDeviceExportRow, bomItem: BomExportRow) {
+  return JSON.stringify([device.category, device.description, device.manufacturer, device.modelNumber, device.specifications])
+    === JSON.stringify([bomItem.category, bomItem.description, bomItem.manufacturer, bomItem.modelNumber, bomItem.specifications]);
 }

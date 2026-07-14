@@ -16,6 +16,26 @@ describe("BOM export", () => {
     expect(csv).toContain("类别");
   });
 
+  it("neutralizes formula prefixes in every CSV text cell", () => {
+    const csv = bomToCsv([{
+      id: "=bom-1",
+      itemNumber: 1,
+      category: "+custom-category",
+      description: "-description",
+      manufacturer: "@manufacturer",
+      modelNumber: "=model",
+      specifications: ["+specification"],
+      quantity: 1,
+      confidence: 0.8,
+      reviewStatus: "requires_review",
+    }]);
+
+    for (const value of ["'=bom-1", "'+custom-category", "'-description", "'@manufacturer", "'=model", "'+specification"]) {
+      expect(csv).toContain(value);
+    }
+    expect(csv).toContain("需要工程师确认");
+  });
+
   it("builds one worksheet with symbol occurrences followed by physical-device BOM totals", async () => {
     const workbook = buildComponentWorkbook({
       drawingId: "drawing-1",
@@ -39,6 +59,25 @@ describe("BOM export", () => {
         originalCategory: null,
         correctedCategory: null,
         removedAt: null,
+      }, {
+        id: "component-2",
+        temporaryId: "KM2-coil",
+        physicalDeviceId: "physical-KM2",
+        category: "contactor",
+        tag: "KM2",
+        description: "Probable contactor",
+        manufacturer: null,
+        modelNumber: "=BAD",
+        specifications: ["24VDC"],
+        confidence: 0.78,
+        reviewStatus: "requires_review",
+        evidence: ["Nearby label KM2"],
+        method: "vision_model",
+        sourceTileId: "tile-1-3",
+        location: { x: 0.52, y: 0.31, width: 0.08, height: 0.06 },
+        originalCategory: null,
+        correctedCategory: null,
+        removedAt: null,
       }],
       physicalDevices: [{
         id: "physical-KM1",
@@ -53,16 +92,29 @@ describe("BOM export", () => {
         confidence: 0.78,
         reviewStatus: "requires_review",
         evidence: ["Nearby label KM1"],
-      }],
-      bomItems: [{
-        id: "bom-1",
-        itemNumber: 1,
+      }, {
+        id: "physical-KM2",
+        temporaryId: "device-KM2",
+        tag: "KM2",
         category: "contactor",
         description: "Probable contactor",
         manufacturer: null,
         modelNumber: "=BAD",
         specifications: ["24VDC"],
         quantity: 1,
+        confidence: 0.78,
+        reviewStatus: "requires_review",
+        evidence: ["Nearby label KM2"],
+      }],
+      bomItems: [{
+        id: "bom-2",
+        itemNumber: 7,
+        category: "contactor",
+        description: "Probable contactor",
+        manufacturer: null,
+        modelNumber: "=BAD",
+        specifications: ["24VDC"],
+        quantity: 2,
         confidence: 0.78,
         reviewStatus: "requires_review",
       }],
@@ -75,9 +127,19 @@ describe("BOM export", () => {
     expect(findCell(sheet, "物理设备与初步 BOM")).toBeTruthy();
     expect(findCell(sheet, "KM1-coil")).toBeTruthy();
     expect(findCell(sheet, "device-KM1")).toBeTruthy();
-    expect(findCell(sheet, 1)).toBeTruthy();
+    expect(findCell(sheet, "device-KM1；device-KM2")).toBeTruthy();
+    expect(findCell(sheet, "bom-2")).toBeTruthy();
+    expect(findCell(sheet, 7)).toBeTruthy();
+    expect(findCell(sheet, 2)).toBeTruthy();
     expect(findCell(sheet, "'=BAD")).toBeTruthy();
+    expect(findCell(sheet, "初步识别结果必须由电气工程师复核。")).toBeTruthy();
     expect(findCell(sheet, "部分区域未完整扫描，结果可能不完整。")).toBeTruthy();
+
+    const bomRows: import("exceljs").Row[] = [];
+    sheet.eachRow((row) => { if (row.getCell(1).value === "bom-2") bomRows.push(row); });
+    expect(bomRows).toHaveLength(1);
+    expect(bomRows[0]?.getCell(11).value).toBe(2);
+    expect(bomRows[0]?.getCell(12).value).toBe(0.78);
 
     const bytes = await workbook.xlsx.writeBuffer();
     expect(bytes.byteLength).toBeGreaterThan(1000);

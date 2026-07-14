@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCategorizedComponents, groupComponentsForDisplay } from "@/lib/presentation/component-list";
+import { formatCategorizedComponents, groupComponentsForDisplay, projectWorkspaceResultState } from "@/lib/presentation/component-list";
 
 const components = [
   { id: "2", temporaryId: "relay-1", category: "relay", tag: "KA1", description: "可能为控制继电器", specifications: [], manufacturer: null, modelNumber: null, confidence: 0.72, reviewStatus: "requires_review", removedAt: null },
@@ -35,5 +35,21 @@ describe("Chinese categorized component list", () => {
     expect(markdown).toContain("符号实例：3");
     expect(markdown).toContain("物理设备：2");
     expect(markdown).toContain("符号清单");
+  });
+
+  it("projects separate counts and limited coverage for the workspace", () => {
+    expect(projectWorkspaceResultState({
+      symbolOccurrenceCount: 4,
+      physicalDeviceCount: 2,
+      requiresReview: 1,
+      unknown: 1,
+      analysisDiagnostics: { attemptedTiles: 3, completedTiles: 2, failedTiles: 1, coverageLimited: false },
+    })).toEqual({
+      symbolOccurrenceCount: 4,
+      physicalDeviceCount: 2,
+      requiresReview: 1,
+      unknown: 1,
+      coverageLimited: true,
+    });
   });
 });

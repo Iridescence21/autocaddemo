@@ -8,7 +8,7 @@ import { XMarkdown } from "@ant-design/x-markdown";
 import { DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, PaperClipOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { parseDrawingCommand } from "@/lib/chat/commands";
 import { COMPONENT_CATEGORIES, type ComponentCategory } from "@/lib/domain";
-import { COMPONENT_CATEGORY_LABELS, formatCategorizedComponents } from "@/lib/presentation/component-list";
+import { COMPONENT_CATEGORY_LABELS, formatCategorizedComponents, projectWorkspaceResultState } from "@/lib/presentation/component-list";
 
 type Component = {
   id: string;
@@ -82,15 +82,9 @@ function specifications(value: unknown) {
   return items.length ? items.join("；") : "图纸中未显示";
 }
 
-function coverageLimited(data: Record<string, unknown>) {
-  const diagnostics = data.analysisDiagnostics;
-  if (!diagnostics || typeof diagnostics !== "object") return false;
-  const values = diagnostics as Record<string, unknown>;
-  return values.coverageLimited === true || Number(values.failedTiles ?? 0) > 0 || Number(values.completedTiles ?? 0) < Number(values.attemptedTiles ?? 0);
-}
-
 function messageToBubble(item: MessageRecord, progressComplete = false): BubbleItemType {
   const data = messagePayload(item);
+  const resultState = projectWorkspaceResultState(data);
   let content: React.ReactNode = null;
   if (item.type === "text") content = <XMarkdown content={String(data.text ?? "")} />;
   if (item.type === "file") {
@@ -107,12 +101,12 @@ function messageToBubble(item: MessageRecord, progressComplete = false): BubbleI
     }]} />;
   }
   if (item.type === "drawing_summary") {
-    const warnings = [...stringArray(data.warnings), ...(coverageLimited(data) ? ["扫描区域受限，结果可能不完整"] : [])];
+    const warnings = [...stringArray(data.warnings), ...(resultState.coverageLimited ? ["扫描区域受限，结果可能不完整"] : [])];
     content = <XMarkdown content={`### 图纸概览\n\n${String(data.summary ?? "暂时无法生成图纸概览。")}\n\n> ${warnings.length ? warnings.join("；") : "初步识别结果必须由电气工程师复核。"}`} />;
   }
   if (item.type === "component_results") {
-    const markdown = typeof data.markdown === "string" ? data.markdown : `### 符号清单\n\n符号实例：${String(data.symbolOccurrenceCount ?? data.total ?? 0)}\n\n物理设备：${String(data.physicalDeviceCount ?? 0)}\n\n待复核：${String(data.requiresReview ?? 0)}\n\n未知符号：${String(data.unknown ?? 0)}`;
-    const coverageWarning = coverageLimited(data) ? "\n\n> 扫描区域受限，结果可能不完整" : "";
+    const markdown = typeof data.markdown === "string" ? data.markdown : `### 符号清单\n\n符号实例：${resultState.symbolOccurrenceCount}\n\n物理设备：${resultState.physicalDeviceCount}\n\n待复核：${resultState.requiresReview}\n\n未知符号：${resultState.unknown}`;
+    const coverageWarning = resultState.coverageLimited ? "\n\n> 扫描区域受限，结果可能不完整" : "";
     content = <XMarkdown content={`${markdown}${coverageWarning}`} />;
   }
   if (item.type === "bom_results") {
