@@ -67,6 +67,26 @@ export function describeAnalysisFailure(error: unknown): AnalysisFailure {
   return { code: "ANALYSIS_FAILED", stage: "分析失败", userMessage: "图纸分析未完成，请检查文件后重试。" };
 }
 
+export async function persistAnalysisFailure(drawingId: string, ownerScope: string, error: unknown) {
+  const failure = describeAnalysisFailure(error);
+  const current = await getAnalysisSnapshot(drawingId, ownerScope);
+  if (!current?.job) return failure;
+  await updateAnalysisStatus(drawingId, ownerScope, {
+    status: "failed",
+    progress: current.job.progress,
+    stage: failure.stage,
+    errorCode: failure.code,
+    errorMessage: failure.userMessage,
+  });
+  await appendMessage(current.drawing.conversationId, {
+    ownerScope,
+    role: "assistant",
+    type: "error",
+    payload: { code: failure.code, message: failure.userMessage },
+  });
+  return failure;
+}
+
 export async function runDrawingAnalysis(drawingId: string, ownerScope: string, overrides: Partial<AnalysisDeps> = {}) {
   const snapshot = await getAnalysisSnapshot(drawingId, ownerScope);
   if (!snapshot?.job || !snapshot.drawing) throw new Error("DRAWING_NOT_FOUND");

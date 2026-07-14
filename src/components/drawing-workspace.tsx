@@ -78,7 +78,7 @@ function specifications(value: unknown) {
   return items.length ? items.join("；") : "图纸中未显示";
 }
 
-function messageToBubble(item: MessageRecord): BubbleItemType {
+function messageToBubble(item: MessageRecord, progressComplete = false): BubbleItemType {
   const data = messagePayload(item);
   let content: React.ReactNode = null;
   if (item.type === "text") content = <XMarkdown content={String(data.text ?? "")} />;
@@ -90,9 +90,9 @@ function messageToBubble(item: MessageRecord): BubbleItemType {
     content = <ThoughtChain items={[{
       key: "progress",
       title: String(data.stage ?? "正在处理"),
-      description: `完成度 ${progress}%`,
-      status: data.status === "failed" ? "error" : progress === 100 ? "success" : "loading",
-      blink: progress < 100,
+      description: progressComplete ? "此阶段已完成" : `完成度 ${progress}%`,
+      status: data.status === "failed" ? "error" : progressComplete || progress === 100 ? "success" : "loading",
+      blink: !progressComplete && progress < 100,
     }]} />;
   }
   if (item.type === "drawing_summary") {
@@ -170,7 +170,7 @@ export default function DrawingWorkspace() {
   const activeComponents = useMemo(() => (activeDrawing?.components ?? []).filter((component) => !component.removedAt), [activeDrawing?.components]);
   const visibleComponents = useMemo(() => activeComponents.filter((component) => !filterCategory || component.category === filterCategory), [activeComponents, filterCategory]);
   const reviewComponents = useMemo(() => activeComponents.filter((component) => component.reviewStatus !== "confirmed" || component.category === "unknown"), [activeComponents]);
-  const bubbles = messages.map(messageToBubble);
+  const latestProgressId = [...messages].reverse().find((message) => message.type === "analysis_progress")?.id;
   const conversationItems: ConversationItemType[] = conversations.map((conversation) => ({
     key: conversation.id,
     label: conversation.drawing?.originalFilename ? `${conversation.title} · ${conversation.drawing.originalFilename}` : conversation.title,
@@ -395,6 +395,9 @@ export default function DrawingWorkspace() {
     status: (activeDrawing.analysisJob.status === "failed" ? "error" : activeDrawing.analysisJob.progress === 100 ? "success" : "loading") as "error" | "success" | "loading",
   }] : [];
   const isProcessing = Boolean(activeDrawing?.analysisJob && ["queued", "converting", "analyzing"].includes(activeDrawing.analysisJob.status));
+  const bubbles = messages
+    .filter((message) => message.type !== "analysis_progress" || message.id === latestProgressId)
+    .map((message) => messageToBubble(message, !isProcessing));
 
   const attachmentTrigger = <Attachments
     accept=".dwg,.dxf"
@@ -427,7 +430,7 @@ export default function DrawingWorkspace() {
       <Welcome variant="borderless" title="演示版提示" description="初步识别结果必须由电气工程师复核" style={{ marginBottom: 8 }} />
     </aside>
 
-    <section style={{ height: "100%", width: "100%", minWidth: 0, display: "flex", flexDirection: "column", boxSizing: "border-box", paddingBlock: 24, gap: 16 }}>
+    <section style={{ height: "100%", width: "100%", minWidth: 0, display: "flex", flexDirection: "column", boxSizing: "border-box", paddingBlock: 24, gap: 16, background: "#ffffff", color: "#1f1f1f" }}>
       <Welcome
         variant="borderless"
         title={snapshot?.title ?? "新的图纸分析"}
@@ -435,7 +438,7 @@ export default function DrawingWorkspace() {
         style={{ width: "100%", maxWidth: 700, margin: "0 auto" }}
       />
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", background: "#ffffff" }}>
         <div style={{ width: "100%", maxWidth: 700, margin: "0 auto", padding: "8px 0 24px" }}>
           {!messages.length ? <>
             <Welcome

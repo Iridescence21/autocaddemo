@@ -11,7 +11,8 @@
     "test": "vitest run",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "worker": "tsx src/worker.ts"
+    "worker": "tsx src/worker.ts",
+    "smoke:dxf": "node --import tsx scripts/smoke-real-dxf.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
