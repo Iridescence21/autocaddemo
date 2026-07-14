@@ -9,6 +9,8 @@ import { DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, PaperClipOut
 import { parseDrawingCommand } from "@/lib/chat/commands";
 import { COMPONENT_CATEGORIES, type ComponentCategory } from "@/lib/domain";
 import { COMPONENT_CATEGORY_LABELS, formatCategorizedComponents, projectWorkspaceResultState } from "@/lib/presentation/component-list";
+import ConversationSidebar from "./conversation-sidebar";
+import WorkspaceShell from "./workspace-shell";
 
 type Component = {
   id: string;
@@ -419,23 +421,16 @@ export default function DrawingWorkspace() {
     onRemove={() => { setSelectedFile(null); setAttachments([]); setAttachmentError(""); }}
   />;
 
-  return <main style={{ width: "100%", minWidth: 1000, height: "100dvh", display: "flex", overflow: "hidden", background: "#ffffff" }}>
-    <aside style={{ width: 280, height: "100%", display: "flex", flexDirection: "column", boxSizing: "border-box", padding: "0 12px", background: "rgba(245,245,245,0.72)" }}>
-      <Welcome variant="borderless" title="电气图纸 AI" description="AutoCAD 图纸初步分析工作台" style={{ margin: "18px 0 8px" }} />
-      <Conversations
-        style={{ flex: 1, overflowY: "auto", marginTop: 12, padding: 0 }}
-        creation={{ label: "新建分析", onClick: () => void newConversation() }}
-        items={conversationItems}
-        activeKey={activeId}
-        onActiveChange={(key) => { setActiveId(key); setSelectedComponent(null); setFilterCategory(null); xConversationsRef.current.setActiveConversationKey(key); }}
-        menu={() => ({
-          items: [{ key: "rename", label: "重命名" }, { key: "delete", label: "删除", danger: true }],
-          onClick: ({ key }) => { if (key === "rename") void renameActive(); else if (window.confirm("确定删除此分析会话吗？")) void deleteActive(); },
-        })}
-      />
-      <Welcome variant="borderless" title="演示版提示" description="初步识别结果必须由电气工程师复核" style={{ marginBottom: 8 }} />
-    </aside>
-
+  return <WorkspaceShell
+    sidebar={<ConversationSidebar
+      items={conversationItems}
+      activeKey={activeId}
+      onCreate={() => void newConversation()}
+      onActiveChange={(key) => { setActiveId(key); setSelectedComponent(null); setFilterCategory(null); xConversationsRef.current.setActiveConversationKey(key); }}
+      onRename={() => void renameActive()}
+      onDelete={() => { if (window.confirm("确定删除此分析会话吗？")) void deleteActive(); }}
+    />}
+  >
     <section style={{ height: "100%", width: "100%", minWidth: 0, display: "flex", flexDirection: "column", boxSizing: "border-box", paddingBlock: 24, gap: 16, background: "#ffffff", color: "#1f1f1f" }}>
       <Welcome
         variant="borderless"
@@ -501,7 +496,7 @@ export default function DrawingWorkspace() {
         />
       </div>
     </section>
-  </main>;
+  </WorkspaceShell>;
 }
 
 function WorkspaceResult({ view, drawing, components, physicalDevices, reviewComponents, selected, onSelect, onConfirm, onEdit, onRemove, onExport }: {

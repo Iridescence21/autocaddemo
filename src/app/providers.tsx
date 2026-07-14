@@ -11,7 +11,18 @@ export default function Providers({ children }: { children: ReactNode }) {
       <XProvider
         locale={zhCN}
         theme={{
-          token: { colorPrimary: "#1677ff", borderRadius: 8, colorBgLayout: "#f5f5f5" },
+          token: {
+            colorPrimary: "#1677ff",
+            colorInfo: "#1677ff",
+            colorBgLayout: "#f5f7fa",
+            colorBgContainer: "#ffffff",
+            borderRadius: 10,
+            borderRadiusLG: 14,
+            boxShadowSecondary: "0 12px 36px rgba(15, 23, 42, 0.10)",
+          },
+          components: {
+            Drawer: { paddingLG: 0 },
+          },
         }}
       >
         {children}
