@@ -5,6 +5,7 @@ import { appendMessage } from "@/lib/repositories/messages";
 import { getAnalysisSnapshot, saveDrawingPreview, updateAnalysisStatus } from "@/lib/repositories/drawings";
 import { generateBom, replaceComponents } from "@/lib/repositories/components";
 import { demoAnalyzer } from "@/lib/cad/demo-analyzer";
+import { demoRenderer } from "@/lib/cad/demo-renderer";
 import { getCadRenderer } from "@/lib/cad/registry";
 import type { CadRenderAdapter, CadSourceType, DemoAnalysisResult, RenderedCadDrawing } from "@/lib/cad/types";
 import { openAiVisionAnalyzer, VisionAnalysisError } from "@/lib/vision/openai-analyzer";
@@ -13,11 +14,14 @@ import { consolidateVisionComponents } from "@/lib/vision/consolidate";
 import { formatCategorizedComponents } from "@/lib/presentation/component-list";
 
 type AnalyzerResult = DemoAnalysisResult | ValidatedVisionResult;
-type Analyzer = { analyze(input: { drawingId: string; sourcePath: string; rendered: RenderedCadDrawing }): Promise<AnalyzerResult> };
+export type Analyzer = { analyze(input: { drawingId: string; sourcePath: string; rendered: RenderedCadDrawing }): Promise<AnalyzerResult> };
+
+export type AnalysisMode = "demo" | "vision";
 
 export type AnalysisDeps = {
   renderer: CadRenderAdapter;
   analyzer: Analyzer | DrawingVisionAnalyzer;
+  analysisMode?: AnalysisMode;
   sourcePathResolver: (drawing: { storageKey: string }) => string;
   delayMs?: number;
 };
@@ -46,20 +50,33 @@ async function isPreparedDemoDwg(sourcePath: string) {
   return source.subarray(0, 4096).toString("utf8").includes("DWG-ELECTRICAL-DEMO:control-panel-a");
 }
 
-async function defaultAdapters(sourceType: CadSourceType, sourcePath: string) {
-  if (sourceType === "dxf") return { renderer: getCadRenderer("dxf"), analyzer: openAiVisionAnalyzer as Analyzer };
-  if (!await isPreparedDemoDwg(sourcePath)) throw new Error("DWG_RENDERER_NOT_CONFIGURED");
-  return { renderer: getCadRenderer("dwg"), analyzer: demoAnalyzer as Analyzer };
+export async function selectDefaultAdapters(
+  sourceType: CadSourceType,
+  sourcePath: string,
+): Promise<{ renderer: CadRenderAdapter; analyzer: Analyzer; mode: AnalysisMode }> {
+  if (sourceType === "dxf") return { renderer: getCadRenderer("dxf"), analyzer: openAiVisionAnalyzer as Analyzer, mode: "vision" };
+  if (await isPreparedDemoDwg(sourcePath)) return { renderer: demoRenderer, analyzer: demoAnalyzer, mode: "demo" };
+  return { renderer: getCadRenderer("dwg"), analyzer: openAiVisionAnalyzer as Analyzer, mode: "vision" };
 }
 
-function componentsFromAnalysis(sourceType: CadSourceType, analysis: AnalyzerResult, rendered: RenderedCadDrawing): ComponentInput[] {
-  if (sourceType === "dxf") return consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
+function componentsFromAnalysis(mode: AnalysisMode, analysis: AnalyzerResult, rendered: RenderedCadDrawing): ComponentInput[] {
+  if (mode === "vision") return consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
   return (analysis as DemoAnalysisResult).components;
 }
+
+const dwgConversionFailures: Record<string, Omit<AnalysisFailure, "code">> = {
+  DWG_CONVERTER_NOT_INSTALLED: { stage: "DWG 转换不可用", userMessage: "此 Mac 尚未安装 DWG 转换器。" },
+  DWG_CONVERSION_TIMEOUT: { stage: "DWG 转换超时", userMessage: "DWG 转换超时，请尝试简化图纸后重试。" },
+  DWG_CONVERSION_FAILED: { stage: "DWG 转换失败", userMessage: "DWG 转换失败，请确认文件未损坏且版本受支持。" },
+  DWG_CONVERTER_OUTPUT_MISSING: { stage: "DWG 转换失败", userMessage: "DWG 转换未生成可分析的图纸。" },
+  DWG_CONVERTER_OUTPUT_TOO_LARGE: { stage: "DWG 转换失败", userMessage: "DWG 转换结果超过当前处理限制。" },
+};
 
 export function describeAnalysisFailure(error: unknown): AnalysisFailure {
   if (error instanceof VisionAnalysisError) return { code: error.code, userMessage: error.userMessage, stage: "AI 分析失败" };
   const code = error instanceof Error ? error.message : "ANALYSIS_FAILED";
+  const dwgConversionFailure = dwgConversionFailures[code];
+  if (dwgConversionFailure) return { code, ...dwgConversionFailure };
   if (code === "DWG_RENDERER_NOT_CONFIGURED") {
     return { code, stage: "DWG 转换不可用", userMessage: "当前尚未配置真实 DWG 转换器。请先上传 DXF，或使用内置 DWG 演示文件。" };
   }
@@ -93,10 +110,11 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
   const sourceType = snapshot.drawing.sourceType as CadSourceType;
   const sourcePathResolver = overrides.sourcePathResolver ?? ((drawing: { storageKey: string }) => resolve(process.cwd(), "data", "uploads", drawing.storageKey));
   const sourcePath = sourcePathResolver(snapshot.drawing);
-  const defaults = overrides.renderer && overrides.analyzer ? null : await defaultAdapters(sourceType, sourcePath);
+  const defaults = overrides.renderer && overrides.analyzer ? null : await selectDefaultAdapters(sourceType, sourcePath);
   const renderer = overrides.renderer ?? defaults?.renderer;
   const analyzer = overrides.analyzer ?? defaults?.analyzer;
   if (!renderer || !analyzer) throw new Error("ANALYSIS_ADAPTER_NOT_CONFIGURED");
+  const analysisMode = overrides.analysisMode ?? defaults?.mode ?? (sourceType === "dxf" || analyzer !== demoAnalyzer ? "vision" : "demo");
   const delayMs = overrides.delayMs ?? Number(process.env.DEMO_STAGE_DELAY_MS ?? 350);
 
   for (const item of stages.slice(0, 2)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
@@ -105,7 +123,7 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
   for (const item of stages.slice(2, 4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
   const analysis = await analyzer.analyze({ drawingId, sourcePath, rendered });
   for (const item of stages.slice(4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
-  const componentInputs = componentsFromAnalysis(sourceType, analysis, rendered);
+  const componentInputs = componentsFromAnalysis(analysisMode, analysis, rendered);
   const components = await replaceComponents(drawingId, ownerScope, componentInputs);
   const reviewCount = components.filter((component) => component.reviewStatus === "requires_review").length;
   const unknownCount = components.filter((component) => component.category === "unknown").length;
