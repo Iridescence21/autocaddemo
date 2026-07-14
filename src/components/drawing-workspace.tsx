@@ -1,23 +1,36 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Prompts, Welcome } from "@ant-design/x";
+import { Attachments, Bubble, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { ConversationItemType } from "@ant-design/x";
 import { useXConversations } from "@ant-design/x-sdk";
-import { CloudUploadOutlined, FileSearchOutlined, SafetyCertificateOutlined, TableOutlined } from "@ant-design/icons";
-import { Tag } from "antd";
+import {
+  CloudUploadOutlined,
+  FileSearchOutlined,
+  MoreOutlined,
+  PaperClipOutlined,
+  SafetyCertificateOutlined,
+  ShareAltOutlined,
+  TableOutlined,
+} from "@ant-design/icons";
+import { Button, Flex } from "antd";
 import { parseDrawingCommand } from "@/lib/chat/commands";
-import { COMPONENT_CATEGORIES, type ComponentCategory } from "@/lib/domain";
+import type { ComponentCategory } from "@/lib/domain";
 import { COMPONENT_CATEGORY_LABELS } from "@/lib/presentation/component-list";
-import AnalysisComposer from "./analysis-composer";
 import ConversationSidebar from "./conversation-sidebar";
 import DrawingMessageList from "./drawing-message-list";
-import WorkspaceInspector from "./workspace-inspector";
 import WorkspaceShell from "./workspace-shell";
-import type { AttachmentItem, Conversation, DrawingComponent, InspectorView, MessageRecord } from "./workspace-types";
+import type { AttachmentItem, Conversation, MessageRecord } from "./workspace-types";
 import styles from "./drawing-workspace.module.css";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const senderCommands: Record<string, string> = {
+  analyze: "分析这张图纸，并按类别列出所有可识别的电气元件。",
+  filter: "筛选接触器",
+  review: "显示需要工程师复核的项目",
+  bom: "生成初步 BOM",
+  export: "导出 BOM",
+};
 
 export default function DrawingWorkspace() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -25,15 +38,13 @@ export default function DrawingWorkspace() {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [snapshot, setSnapshot] = useState<Conversation | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
-  const [selectedComponent, setSelectedComponent] = useState<DrawingComponent | null>(null);
-  const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [inspectorView, setInspectorView] = useState<InspectorView>("drawing");
+  const [senderValue, setSenderValue] = useState("");
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
+  const [senderMounted, setSenderMounted] = useState(false);
   const xConversations = useXConversations({ defaultConversations: [] });
   const xConversationsRef = useRef(xConversations);
-  const initializedRef = useRef(false);
 
   const loadConversations = useCallback(async () => {
     const response = await fetch("/api/drawing-conversations", { cache: "no-store" });
@@ -42,10 +53,6 @@ export default function DrawingWorkspace() {
     const list = data.conversations ?? [];
     setConversations(list);
     xConversationsRef.current.setConversations(list.map((item) => ({ key: item.id, title: item.title })));
-    if (!initializedRef.current && list[0]) {
-      initializedRef.current = true;
-      setActiveId(list[0].id);
-    }
   }, []);
 
   const loadActive = useCallback(async (id: string) => {
@@ -59,6 +66,7 @@ export default function DrawingWorkspace() {
   }, []);
 
   useEffect(() => { queueMicrotask(() => void loadConversations()); }, [loadConversations]);
+  useEffect(() => { queueMicrotask(() => setSenderMounted(true)); }, []);
   useEffect(() => { if (activeId) queueMicrotask(() => void loadActive(activeId)); }, [activeId, loadActive]);
   useEffect(() => {
     const job = snapshot?.drawing?.analysisJob;
@@ -69,15 +77,14 @@ export default function DrawingWorkspace() {
 
   const activeDrawing = snapshot?.drawing ?? null;
   const activeComponents = useMemo(() => (activeDrawing?.components ?? []).filter((component) => !component.removedAt), [activeDrawing?.components]);
-  const visibleComponents = useMemo(() => activeComponents.filter((component) => !filterCategory || component.category === filterCategory), [activeComponents, filterCategory]);
   const reviewComponents = useMemo(() => activeComponents.filter((component) => component.reviewStatus !== "confirmed" || component.category === "unknown"), [activeComponents]);
   const latestProgressId = [...messages].reverse().find((message) => message.type === "analysis_progress")?.id;
   const visibleMessages = messages.filter((message) => message.type !== "analysis_progress" || message.id === latestProgressId);
-  const isProcessing = Boolean(activeDrawing?.analysisJob && ["queued", "converting", "analyzing"].includes(activeDrawing.analysisJob.status));
 
   const conversationItems: ConversationItemType[] = conversations.map((conversation) => ({
     key: conversation.id,
     label: conversation.drawing?.originalFilename ? `${conversation.title} · ${conversation.drawing.originalFilename}` : conversation.title,
+    group: "今天",
   }));
 
   async function newConversation() {
@@ -88,7 +95,6 @@ export default function DrawingWorkspace() {
     setActiveId(data.conversation.id);
     setSnapshot(data.conversation);
     setMessages([]);
-    setInspectorView("drawing");
     return data.conversation.id;
   }
 
@@ -102,28 +108,24 @@ export default function DrawingWorkspace() {
     await fetch(`/api/conversations/${conversationId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "text", role, payload: { text } }) });
   }
 
-  function selectAttachment(file: File, uid = "local") {
+  function selectAttachment(file: File) {
     setAttachmentError("");
     if (!/\.(dwg|dxf)$/i.test(file.name)) {
       setSelectedFile(null);
-      setAttachments([{ uid, name: file.name, status: "error", response: "仅支持 DWG 或 DXF 文件" }]);
       setAttachmentError("不支持此文件类型。请选择 DWG 或 DXF 图纸。");
       return false;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
       setSelectedFile(null);
-      setAttachments([{ uid, name: file.name, status: "error", response: "文件超过 25 MB" }]);
       setAttachmentError("文件超过当前 25 MB 上传限制。");
       return false;
     }
     setSelectedFile(file);
-    setAttachments([{ uid, name: file.name, status: "done" }]);
     return false;
   }
 
   function clearAttachment() {
     setSelectedFile(null);
-    setAttachments([]);
     setAttachmentError("");
   }
 
@@ -136,7 +138,7 @@ export default function DrawingWorkspace() {
     const data = (await response.json()) as { drawingId?: string; message?: string };
     if (!response.ok || !data.drawingId) throw new Error(data.message ?? "图纸上传失败，请重试。");
     clearAttachment();
-    setInspectorView("files");
+    setAttachmentsOpen(false);
     return { drawingId: data.drawingId, uploaded: true };
   }
 
@@ -164,8 +166,6 @@ export default function DrawingWorkspace() {
     const command = parseDrawingCommand(text);
     if (!command) return false;
     if (command.type === "filter_components") {
-      setFilterCategory(command.category);
-      setInspectorView("components");
       const count = activeComponents.filter((component) => component.category === command.category).length;
       await appendText(`已筛选“${COMPONENT_CATEGORY_LABELS[command.category]}”，共找到 ${count} 个。`, "assistant");
       return true;
@@ -173,8 +173,6 @@ export default function DrawingWorkspace() {
     if (command.type === "select_component") {
       const component = activeComponents.find((item) => item.tag?.toLowerCase() === command.tag.toLowerCase());
       if (component) {
-        setSelectedComponent(component);
-        setInspectorView("components");
         await appendText(`已选择 ${command.tag}。当前分类：${COMPONENT_CATEGORY_LABELS[component.category as ComponentCategory] ?? component.category}；置信度：${Math.round(component.confidence * 100)}%。`, "assistant");
       } else await appendText(`未在当前图纸中找到 ${command.tag}。`, "assistant");
       return true;
@@ -200,16 +198,13 @@ export default function DrawingWorkspace() {
     if (command.type === "generate_bom") {
       await regenerateBom(drawingId);
       await appendText("已根据当前有效元件重新生成初步 BOM。所有采购信息仍需工程师确认。", "assistant");
-      setInspectorView("bom");
       return true;
     }
     if (command.type === "export_bom") {
       await downloadBom(drawingId);
       return true;
     }
-    setFilterCategory(null);
-    setInspectorView("review");
-    await appendText(`已打开复核清单，共 ${reviewComponents.length} 个项目。`, "assistant");
+    await appendText(`当前共 ${reviewComponents.length} 个待复核项目。请在会话结果中逐项确认。`, "assistant");
     return true;
   }
 
@@ -265,45 +260,40 @@ export default function DrawingWorkspace() {
     await loadConversations();
   }
 
-  async function updateSelected(data: { category?: string; reviewStatus?: string }) {
-    if (!activeDrawing || !selectedComponent) return;
-    await fetch(`/api/drawings/${activeDrawing.id}/components`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ componentId: selectedComponent.id, ...data }) });
-    await regenerateBom(activeDrawing.id);
-    await appendText(`已更新 ${selectedComponent.tag ?? selectedComponent.temporaryId}，并重新生成初步 BOM。`, "assistant");
-    await refresh();
-  }
-
-  async function editSelectedCategory() {
-    if (!selectedComponent) return;
-    const category = window.prompt(`输入新的类别：\n${COMPONENT_CATEGORIES.join("\n")}`, selectedComponent.category)?.trim() as ComponentCategory | undefined;
-    if (!category || !COMPONENT_CATEGORIES.includes(category)) {
-      if (category) setAttachmentError("类别无效，请从受控类别列表中选择。");
-      return;
-    }
-    await updateSelected({ category, reviewStatus: "confirmed" });
-  }
-
-  async function removeSelected() {
-    if (!activeDrawing || !selectedComponent || !window.confirm(`确定移除 ${selectedComponent.tag ?? selectedComponent.temporaryId} 吗？`)) return;
-    await fetch(`/api/drawings/${activeDrawing.id}/components`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ componentId: selectedComponent.id }) });
-    await regenerateBom(activeDrawing.id);
-    await appendText(`已移除 ${selectedComponent.tag ?? selectedComponent.temporaryId}，初步 BOM 已更新。`, "assistant");
-    setSelectedComponent(null);
-    await refresh();
-  }
-
   const startPrompts = [
-    { key: "upload", icon: <CloudUploadOutlined />, label: "上传并分析图纸", description: "支持 DWG 和 ASCII DXF" },
-    { key: "identify", icon: <FileSearchOutlined />, label: "识别全部电气元件", description: "输出符号与物理设备" },
-    { key: "bom", icon: <TableOutlined />, label: "生成初步 BOM", description: "不猜测未显示的产品信息" },
-    { key: "review", icon: <SafetyCertificateOutlined />, label: "查看复核规则", description: "所有 AI 结果需要确认" },
+    { key: "identify", label: "识别全部电气元件", description: senderCommands.analyze },
+    { key: "filter", label: "筛选接触器与继电器", description: senderCommands.filter },
+    { key: "review", label: "查看待工程师复核项", description: senderCommands.review },
+    { key: "bom", label: "根据物理设备生成 BOM", description: senderCommands.bom },
   ];
+  const guidePrompts = [{
+    key: "guide",
+    label: "专业分析指南",
+    children: [
+      { key: "layers", icon: <FileSearchOutlined />, label: "图层与符号", description: "分析图层并识别符号实例" },
+      { key: "devices", icon: <TableOutlined />, label: "物理设备归并", description: "将符号实例归并为物理设备" },
+      { key: "review-guide", icon: <SafetyCertificateOutlined />, label: "工程复核", description: senderCommands.review },
+    ],
+  }];
+  const quickPrompts = [{
+    key: "quick",
+    label: "快速开始",
+    children: [
+      { key: "upload", icon: <CloudUploadOutlined />, label: "上传 DWG / DXF", description: "上传图纸后开始完整识别" },
+      { key: "export", icon: <TableOutlined />, label: "导出元件清单", description: senderCommands.export },
+    ],
+  }];
   const followupPrompts = [
-    { key: "components", label: "符号清单", description: `${activeComponents.length} 个符号实例` },
-    { key: "review", label: "复核项目", description: `${reviewComponents.length} 个待确认项目` },
-    { key: "bom", label: "初步 BOM", description: `${activeDrawing?.bomItems.length ?? 0} 个采购分组` },
-    { key: "files", label: "会话文件", description: "原图、分析产物和导出" },
+    { key: "analyze", label: "完整识别", description: senderCommands.analyze },
+    { key: "filter", label: "筛选元件", description: senderCommands.filter },
+    { key: "review", label: "工程复核", description: senderCommands.review },
+    { key: "bom", label: "生成 BOM", description: senderCommands.bom },
   ];
+  const attachmentItems: AttachmentItem[] = selectedFile ? [{
+    uid: selectedFile.name,
+    name: selectedFile.name,
+    status: "done",
+  }] : [];
 
   const sidebar = <ConversationSidebar
     items={conversationItems}
@@ -311,76 +301,81 @@ export default function DrawingWorkspace() {
     onCreate={() => void newConversation()}
     onActiveChange={(key) => {
       setActiveId(key);
-      setSelectedComponent(null);
-      setFilterCategory(null);
-      setInspectorView("drawing");
       xConversationsRef.current.setActiveConversationKey(key);
     }}
     onRename={() => void renameActive()}
     onDelete={() => { if (window.confirm("确定删除此分析会话吗？")) void deleteActive(); }}
   />;
 
-  const inspector = <WorkspaceInspector
-    activeView={inspectorView}
-    drawing={activeDrawing}
-    messages={messages}
-    components={visibleComponents}
-    reviewComponents={reviewComponents}
-    selected={selectedComponent}
-    onViewChange={(view) => { setInspectorView(view); if (view !== "components") setFilterCategory(null); }}
-    onSelect={setSelectedComponent}
-    onConfirm={() => void updateSelected({ reviewStatus: "confirmed" })}
-    onEdit={() => void editSelectedCategory()}
-    onRemove={() => void removeSelected()}
-    onRegenerate={() => { if (activeDrawing) void regenerateBom(activeDrawing.id).then(() => refresh()); }}
-    onExport={() => { if (activeDrawing) void downloadBom(activeDrawing.id); }}
-  />;
+  const submitPrompt = (description?: unknown, key?: string | number) => {
+    if (key === "upload") {
+      setAttachmentsOpen(true);
+      return;
+    }
+    if (typeof description === "string") void submit(description);
+  };
+
+  const senderHeader = (
+    <Sender.Header
+      title="上传电气图纸"
+      open={attachmentsOpen}
+      onOpenChange={setAttachmentsOpen}
+      styles={{ content: { padding: 0 } }}
+    >
+      <Attachments
+        accept=".dwg,.dxf"
+        maxCount={1}
+        items={attachmentItems}
+        beforeUpload={(file) => selectAttachment(file)}
+        onRemove={() => { clearAttachment(); return true; }}
+        placeholder={(type) => type === "drop"
+          ? { title: "将 DWG 或 DXF 图纸拖到这里" }
+          : { icon: <CloudUploadOutlined />, title: "选择或拖入图纸", description: "支持 DWG 和 ASCII DXF，最大 25 MB" }}
+      />
+    </Sender.Header>
+  );
 
   return (
-    <WorkspaceShell sidebar={sidebar} inspector={inspector}>
+    <WorkspaceShell sidebar={sidebar}>
       <div className={styles.centerWorkspace}>
-        <header className={styles.centerHeader}>
-          <div>
-            <h2>{snapshot?.title ?? "新的图纸分析"}</h2>
-            <p>{activeDrawing ? activeDrawing.originalFilename : "上传图纸并用自然语言开始工程分析"}</p>
-          </div>
-          <Tag color={isProcessing ? "processing" : activeDrawing ? "success" : "default"}>
-            {isProcessing ? activeDrawing?.analysisJob?.stage : activeDrawing ? "会话就绪" : "等待图纸"}
-          </Tag>
-        </header>
-
         <div className={styles.chatScroll}>
           <div className={styles.chatContent}>
             {!visibleMessages.length ? (
               <div className={styles.emptyWorkspace}>
                 <Welcome
                   variant="borderless"
-                  title="上传图纸，开始专业分析"
-                  description="AI 将整理符号实例、物理设备、工程复核项和初步 BOM；图纸中未显示的信息不会被猜测。"
+                  icon={<Button type="primary" shape="circle" size="large" icon={<FileSearchOutlined />} />}
+                  title="欢迎使用 电气图纸 AI"
+                  description="基于 Ant Design X 的 AutoCAD 智能分析工作台，所有 AI 结果需要工程师确认。"
+                  extra={<Flex gap={8}><Button size="small" icon={<ShareAltOutlined />} /><Button size="small" icon={<MoreOutlined />} /></Flex>}
                 />
-                <Prompts title="可以这样开始" wrap items={startPrompts} onItemClick={({ data }) => {
-                  if (data.key === "upload") return;
-                  void submit(data.key === "identify" ? "分析这张图纸，并按类别列出所有可识别的电气元件。" : data.key === "bom" ? "生成初步 BOM" : "显示需要工程师复核的项目");
-                }} />
+                <div className={styles.welcomeGrid}>
+                  <Prompts title="热门任务" items={startPrompts} vertical onItemClick={({ data }) => submitPrompt(data.description, data.key)} styles={{ item: { border: 0, background: "#f5f7ff" } }} />
+                  <Prompts items={guidePrompts} vertical onItemClick={({ data }) => submitPrompt(data.description, data.key)} styles={{ item: { border: 0, background: "#f8f5ff" }, subItem: { background: "#fff" } }} />
+                  <Prompts items={quickPrompts} vertical onItemClick={({ data }) => submitPrompt(data.description, data.key)} styles={{ item: { border: 0, background: "#f3f7ff" }, subItem: { background: "#fff" } }} />
+                </div>
               </div>
             ) : (
-              <DrawingMessageList messages={visibleMessages} onOpenInspector={setInspectorView} onRetry={() => void retryAnalysis()} />
+              <DrawingMessageList messages={visibleMessages} onRetry={() => void retryAnalysis()} onExport={() => { if (activeDrawing) void downloadBom(activeDrawing.id); }} />
             )}
           </div>
         </div>
 
         <footer className={styles.composerDock}>
-          {activeDrawing ? <Prompts className={styles.followupPrompts} wrap items={followupPrompts} onItemClick={({ data }) => { setFilterCategory(null); setInspectorView(data.key as InspectorView); }} /> : null}
-          <AnalysisComposer
-            attachments={attachments}
-            attachmentError={attachmentError}
+          {!attachmentsOpen ? <Prompts className={styles.followupPrompts} items={followupPrompts} onItemClick={({ data }) => submitPrompt(data.description, data.key)} styles={{ item: { padding: "5px 12px" } }} /> : null}
+          {attachmentError ? <Bubble.System variant="outlined" content={`附件错误：${attachmentError}`} /> : null}
+          {senderMounted ? <Sender
             loading={loading}
-            hasDrawing={Boolean(activeDrawing)}
-            onSelectFile={selectAttachment}
-            onRemoveFile={clearAttachment}
-            onSubmit={(text) => void submit(text)}
+            value={senderValue}
+            header={senderHeader}
+            prefix={<Button type="text" icon={<PaperClipOutlined />} aria-label="上传 DWG 或 DXF 图纸" onClick={() => setAttachmentsOpen((open) => !open)} />}
+            allowSpeech
+            placeholder={activeDrawing ? "询问图纸、筛选元件或修改识别结果" : "上传 DWG 或 DXF 图纸，或输入分析要求"}
+            onChange={setSenderValue}
+            onPasteFile={(files) => { const file = files.item(0); if (file) selectAttachment(file); }}
+            onSubmit={(text) => { if (!text.trim() && !selectedFile) return; setSenderValue(""); void submit(text); }}
             onCancel={() => { setLoading(false); if (activeId) void appendText("已停止等待当前响应；已提交的后台分析任务仍会继续。", "assistant"); }}
-          />
+          /> : <div className={styles.senderPlaceholder} aria-hidden="true" />}
         </footer>
       </div>
     </WorkspaceShell>

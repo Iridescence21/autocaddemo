@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("Ant Design X Chinese drawing workspace", () => {
-  it("uses a responsive three-pane shell without a forced desktop minimum width", async () => {
+  it("uses the official responsive two-column independent layout", async () => {
     const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
     const shell = await readFile(resolve(process.cwd(), "src/components/workspace-shell.tsx"), "utf8");
     const sidebar = await readFile(resolve(process.cwd(), "src/components/conversation-sidebar.tsx"), "utf8");
@@ -13,7 +13,8 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(source).toContain("ConversationSidebar");
     expect(shell).toContain("Drawer");
     expect(sidebar).toContain("Conversations");
-    expect(styles).toContain("grid-template-columns");
+    expect(sidebar).toContain("groupable");
+    expect(styles).toContain("grid-template-columns: 280px minmax(0, 1fr)");
     expect(styles).toMatch(/@media\s*\(max-width:/);
     expect(styles).not.toContain("min-width: 1000px");
     expect(source).not.toContain("minWidth: 1000");
@@ -23,21 +24,28 @@ describe("Ant Design X Chinese drawing workspace", () => {
   it("presents the MVP interface and verification warning in Simplified Chinese", async () => {
     const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
     const sidebar = await readFile(resolve(process.cwd(), "src/components/conversation-sidebar.tsx"), "utf8");
-    const composer = await readFile(resolve(process.cwd(), "src/components/analysis-composer.tsx"), "utf8");
 
     expect(sidebar).toContain("电气图纸 AI");
-    expect(composer).toContain("上传 DWG 或 DXF 图纸");
-    expect(sidebar).toContain("初步识别结果必须由电气工程师复核");
+    expect(source).toContain("上传 DWG 或 DXF 图纸");
+    expect(source).toContain("所有 AI 结果需要工程师确认");
     expect(source).toContain("元件清单");
     expect(source).not.toContain("Electrical Drawing AI");
   });
 
-  it("keeps the attachment panel inside the Sender header slot", async () => {
-    const source = await readFile(resolve(process.cwd(), "src/components/analysis-composer.tsx"), "utf8");
+  it("uses the official independent-demo Sender and attachment header", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+    const styles = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.module.css"), "utf8");
 
-    expect(source).toContain("<Sender.Header open={attachments.length > 0}");
-    expect(source).toContain("Suggestion");
-    expect(source).toContain("Sender.Switch");
+    expect(source).toContain("Attachments, Bubble, Prompts, Sender, Welcome");
+    expect(source).toContain("<Sender.Header");
+    expect(source).toContain("allowSpeech");
+    expect(source).toContain("prefix={");
+    expect(source).toContain("<Welcome");
+    expect(source).toContain("<Prompts");
+    expect(source).not.toContain("AnalysisComposer");
+    expect(source).not.toContain("Sender.Switch");
+    expect(styles).not.toMatch(/\.composer\s*\{/);
+    expect(styles).not.toContain(".composerFooter");
   });
 
   it("offers the complete component analysis as an Excel download", async () => {
@@ -60,11 +68,14 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(inspector).toContain("physicalDevices");
   });
 
-  it("integrates the split message, composer and inspector components", async () => {
+  it("keeps results in the message stream without an inspector rail", async () => {
     const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+    const shell = await readFile(resolve(process.cwd(), "src/components/workspace-shell.tsx"), "utf8");
 
-    for (const component of ["DrawingMessageList", "AnalysisComposer", "WorkspaceInspector"]) expect(source).toContain(component);
+    for (const component of ["DrawingMessageList", "Sender"]) expect(source).toContain(component);
+    expect(source).not.toContain("WorkspaceInspector");
+    expect(source).not.toContain("inspector=");
+    expect(shell).not.toContain("rightOpen");
     expect(source).not.toContain("function WorkspaceResult");
-    expect(source).not.toMatch(/style=\{\{/);
   });
 });

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildMessageView } from "./workspace-model";
 import type { MessageRecord } from "./workspace-types";
@@ -7,6 +9,17 @@ function message(type: string, payload: Record<string, unknown>, role = "assista
 }
 
 describe("drawing message view model", () => {
+  it("renders one official Bubble.List with inline reasoning and actions", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-message-list.tsx"), "utf8");
+
+    expect(source).toContain("<Bubble.List");
+    expect(source).toContain("items={items}");
+    expect(source).toContain("ThoughtChain");
+    expect(source).toContain("Think");
+    expect(source).toContain("Actions");
+    expect(source).not.toContain("onOpenInspector");
+  });
+
   it("maps user text and failures to distinct bubble roles", () => {
     expect(buildMessageView(message("text", { text: "识别这张图纸" }, "user"))).toMatchObject({ role: "user", kind: "text" });
     expect(buildMessageView(message("error", { message: "转换失败" }))).toMatchObject({ role: "system", kind: "error", status: "error" });
