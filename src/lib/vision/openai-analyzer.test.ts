@@ -33,8 +33,8 @@ function resultFor(tileId: string, labels: string[]) {
       category: "contactor" as const,
       label,
       description: "可能为接触器",
-      manufacturer: null,
-      modelNumber: null,
+      manufacturer: null as string | null,
+      modelNumber: null as string | null,
       specifications: ["24VDC"],
       confidence: 0.78,
       tileId,
@@ -129,6 +129,41 @@ describe("OpenAI drawing vision analyzer", () => {
     expect(result.analysisDiagnostics.completedTiles).toBe(2);
     expect(JSON.stringify(fetchImpl.mock.calls[0][1]?.body)).toContain("T1");
     expect(JSON.stringify(fetchImpl.mock.calls[0][1]?.body)).not.toContain("T2");
+  });
+
+  it("converts model-authored strings to safe Markdown plain text without changing application warnings", async () => {
+    const malicious = resultFor("tile-1-1", ["[点击](javascript:alert(1))"]);
+    malicious.drawingSummary = "<img src=x onerror=alert(1)>\n# 中文标题";
+    malicious.warnings = ["# model warning"];
+    malicious.components[0] = {
+      ...malicious.components[0],
+      description: "<img src=x onerror=alert(1)>\n# heading\n| table |\n```code```",
+      manufacturer: "<b>制造商</b>",
+      modelNumber: "`型号`",
+      specifications: ["| 规格 |", "保留中文\n下一行\u0000"],
+      evidence: ["![图片](javascript:alert(1))"],
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(modelResponse(malicious));
+    const analyzer = createOpenAiVisionAnalyzer({ apiKey: "test-secret", fetchImpl });
+    const input = inputWithTiles(1);
+    input.rendered.metadata!.context!.warnings = ["<application warning>"];
+
+    const result = await analyzer.analyze(input);
+    const detection = result.components[0];
+
+    expect(result.drawingSummary).toBe("&lt;img src\\=x onerror\\=alert\\(1\\)&gt;\n\\# 中文标题");
+    expect(result.warnings).toEqual(expect.arrayContaining(["\\# model warning", "<application warning>"]));
+    expect(detection.label).toBe("\\[点击\\]\\(javascript:alert\\(1\\)\\)");
+    expect(detection.description).toContain("&lt;img src\\=x onerror\\=alert\\(1\\)&gt;");
+    expect(detection.description).toContain("\\# heading");
+    expect(detection.description).toContain("\\| table \\|");
+    expect(detection.description).toContain("\\`\\`\\`code\\`\\`\\`");
+    expect(detection.manufacturer).toBe("&lt;b&gt;制造商&lt;/b&gt;");
+    expect(detection.modelNumber).toBe("\\`型号\\`");
+    expect(detection.specifications).toEqual(["\\| 规格 \\|", "保留中文\n下一行"]);
+    expect(detection.evidence).toEqual(["\\!\\[图片\\]\\(javascript:alert\\(1\\)\\)"]);
+    expect(JSON.stringify(result.components)).not.toContain("<img");
+    expect(JSON.stringify(result.components)).not.toContain("](javascript:");
   });
 
   it("runs a missed-candidate verification pass for dense tiles", async () => {

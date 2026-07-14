@@ -127,6 +127,37 @@ function normalizeDetections(tile: CadDrawingTile, pass: TilePass, detections: V
   return detections.map((detection, index) => ({ ...detection, temporaryId: `${tile.id}-${pass}-${index + 1}`, tileId: tile.id }));
 }
 
+function safeMarkdownPlainText(value: string) {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\p{Cc}\p{Cf}]/gu, (character) => character === "\n" ? character : "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/[\\`*_[\]{}()#+\-.!|~=]/g, "\\$&");
+}
+
+function sanitizeModelDetection(detection: VisionDetection): VisionDetection {
+  return {
+    ...detection,
+    label: detection.label === null ? null : safeMarkdownPlainText(detection.label),
+    description: safeMarkdownPlainText(detection.description),
+    manufacturer: detection.manufacturer === null ? null : safeMarkdownPlainText(detection.manufacturer),
+    modelNumber: detection.modelNumber === null ? null : safeMarkdownPlainText(detection.modelNumber),
+    specifications: detection.specifications.map(safeMarkdownPlainText),
+    evidence: detection.evidence.map(safeMarkdownPlainText),
+  };
+}
+
+function sanitizeModelResult(result: TileVisionResult): TileVisionResult {
+  return {
+    ...result,
+    drawingSummary: safeMarkdownPlainText(result.drawingSummary),
+    components: result.components.map(sanitizeModelDetection),
+    warnings: result.warnings.map(safeMarkdownPlainText),
+  };
+}
+
 function uniqueWarnings(warnings: string[]) {
   return [...new Set(warnings)];
 }
@@ -177,7 +208,10 @@ export function createOpenAiVisionAnalyzer(options: OpenAiAnalyzerOptions = {}):
               throw new VisionAnalysisError("AI_RESPONSE_INVALID");
             }
             const validated = visionResultSchema.safeParse(decoded);
-            if (validated.success) return { ...validated.data, components: normalizeDetections(tile, pass, validated.data.components) };
+            if (validated.success) {
+              const sanitized = sanitizeModelResult(validated.data);
+              return { ...sanitized, components: normalizeDetections(tile, pass, sanitized.components) };
+            }
             validationNote = validated.error.issues.slice(0, 8).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
             if (attempt === 1) throw new VisionAnalysisError("AI_RESPONSE_INVALID");
           } catch (error) {
