@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { planAnalysisTiles } from "@/lib/cad/analysis-tiles";
-import type { DxfExtents, NormalizedDxfDrawing } from "@/lib/cad/dxf-types";
+import { getEntityBounds, normalizeAnalysisTileOptions, planAnalysisTiles } from "@/lib/cad/analysis-tiles";
+import type { DxfExtents, NormalizedDxfDrawing, NormalizedDxfEntity } from "@/lib/cad/dxf-types";
 
 function denseDrawing({
   entities,
@@ -45,5 +45,38 @@ describe("planAnalysisTiles", () => {
     expect(plan.tiles).toHaveLength(3);
     expect(plan.limited).toBe(true);
     expect(plan.warnings).toContain("分析区域达到上限，部分图纸区域可能未完整扫描。");
+  });
+
+  it("clamps invalid and excessive planner options to safe limits", () => {
+    expect(normalizeAnalysisTileOptions({ maxTiles: 0, overlapRatio: Number.NaN, targetEntitiesPerTile: -1 })).toEqual({ maxTiles: 24, overlapRatio: 0.1, targetEntitiesPerTile: 140 });
+    expect(normalizeAnalysisTileOptions({ maxTiles: 9999, overlapRatio: 99, targetEntitiesPerTile: 999999 })).toEqual({ maxTiles: 64, overlapRatio: 0.5, targetEntitiesPerTile: 2000 });
+
+    const plan = planAnalysisTiles(denseDrawing({ entities: 180 }), { maxTiles: 0, overlapRatio: -1, targetEntitiesPerTile: 0 });
+    expect(plan.tiles.length).toBeGreaterThan(0);
+    expect(plan.tiles.length).toBeLessThanOrEqual(24);
+  });
+
+  it("uses partial ARC and ELLIPSE bounds instead of full-shape bounds", () => {
+    const drawing = denseDrawing({ entities: 0 });
+    const arc: NormalizedDxfEntity = { type: "ARC", layer: "0", handle: "arc", center: { x: 50, y: 50 }, radius: 10, startAngle: 0, endAngle: Math.PI / 2 };
+    const ellipse: NormalizedDxfEntity = { type: "ELLIPSE", layer: "0", handle: "ellipse", center: { x: 50, y: 50 }, majorAxis: { x: 10, y: 0 }, axisRatio: 0.5, startAngle: 0, endAngle: Math.PI / 2 };
+
+    expect(getEntityBounds(arc, drawing)).toMatchObject({ minX: 50, minY: 50, maxX: 60, maxY: 60 });
+    expect(getEntityBounds(ellipse, drawing)).toMatchObject({ minX: 50, minY: 50, maxX: 60, maxY: 55 });
+  });
+
+  it("orders occupied cells top-to-bottom and counts text and INSERT entities", () => {
+    const drawing = denseDrawing({ entities: 4 });
+    drawing.entities.push(
+      { type: "TEXT", layer: "0", handle: "text", position: { x: 250, y: 750 }, value: "KM1", height: 20, rotation: 0 },
+      { type: "INSERT", layer: "0", handle: "insert", blockName: "CONTACT", position: { x: 750, y: 750 }, scaleX: 1, scaleY: 1, rotation: 0 },
+    );
+    drawing.blockDefinitions.CONTACT = [{ type: "LINE", layer: "0", handle: "block-line", points: [{ x: 0, y: 0 }, { x: 20, y: 0 }], closed: false }];
+    const plan = planAnalysisTiles(drawing, { maxTiles: 24, overlapRatio: 0, targetEntitiesPerTile: 1 });
+
+    expect(plan.tiles[0].cadBounds.minY).toBeGreaterThan(plan.tiles[2].cadBounds.minY);
+    expect(plan.tiles[0].cadBounds.minX).toBeLessThan(plan.tiles[1].cadBounds.minX);
+    expect(plan.tiles.some((tile) => tile.textCount > 0)).toBe(true);
+    expect(plan.tiles.some((tile) => tile.blockCount > 0)).toBe(true);
   });
 });

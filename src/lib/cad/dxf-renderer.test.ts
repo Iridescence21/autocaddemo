@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseDxfFile } from "@/lib/cad/dxf-parser";
 import { renderDxfSvg } from "@/lib/cad/dxf-svg";
-import { dxfRenderer } from "@/lib/cad/dxf-renderer";
+import { createDxfRenderer, dxfRenderer, readCadAnalysisTileConfig } from "@/lib/cad/dxf-renderer";
 
 const fixture = resolve(process.cwd(), "fixtures/cad/synthetic-control-panel.dxf");
 
@@ -29,5 +29,47 @@ describe("DXF renderer", () => {
     expect(rendered.tiles.every((tile) => tile.cadBounds && tile.entityCount > 0)).toBe(true);
     expect(rendered.metadata?.coverageLimited).toBe(false);
     expect(rendered.metadata?.context?.texts.map((text) => text.value)).toContain("KM1");
+  });
+
+  it("uses safe defaults and clamps environment tile settings", () => {
+    expect(readCadAnalysisTileConfig({})).toEqual({ tilePixels: 1536, maxTiles: 24, overlapRatio: 0.1, targetEntitiesPerTile: 140, renderConcurrency: 4, renderTimeoutMs: 15000 });
+    expect(readCadAnalysisTileConfig({
+      CAD_ANALYSIS_TILE_PIXELS: "99999",
+      CAD_ANALYSIS_MAX_TILES: "0",
+      CAD_ANALYSIS_TILE_OVERLAP_RATIO: "2",
+      CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE: "-1",
+      CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "999",
+      CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "NaN",
+    })).toEqual({ tilePixels: 4096, maxTiles: 1, overlapRatio: 0.5, targetEntitiesPerTile: 1, renderConcurrency: 8, renderTimeoutMs: 15000 });
+  });
+
+  it("keeps successful tiles and warns when a timed-out tile fails", async () => {
+    const renderer = createDxfRenderer({
+      environment: {
+        CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE: "1",
+        CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "100",
+        CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "2",
+      },
+      rasterizeTile: async (_svg, tile) => {
+        if (tile.id === "tile-1") return new Promise<Buffer>(() => undefined);
+        return Buffer.from(tile.id);
+      },
+    });
+
+    const rendered = await renderer.render({ drawingId: "drawing-partial-failure", sourcePath: fixture, sourceType: "dxf" });
+
+    expect(rendered.tiles.length).toBeGreaterThan(0);
+    expect(rendered.tiles.map((tile) => tile.id)).not.toContain("tile-1");
+    expect(rendered.metadata?.coverageLimited).toBe(true);
+    expect(rendered.metadata?.context?.warnings).toContain("部分分析区域渲染失败，可能未完整扫描。");
+  });
+
+  it("throws a stable error when every planned tile fails", async () => {
+    const renderer = createDxfRenderer({
+      environment: { CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE: "1" },
+      rasterizeTile: async () => { throw new Error("RASTER_FAILURE"); },
+    });
+
+    await expect(renderer.render({ drawingId: "drawing-total-failure", sourcePath: fixture, sourceType: "dxf" })).rejects.toThrow("DXF_ANALYSIS_TILE_RENDER_FAILED");
   });
 });
