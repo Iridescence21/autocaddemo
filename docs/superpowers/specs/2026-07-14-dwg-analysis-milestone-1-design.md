@@ -21,15 +21,28 @@ store for development. The upload route validates the request, creates a
 `Drawing` and `AnalysisJob`, and returns immediately. A worker function runs
 outside the request handler, updates the job through explicit states, invokes a
 `CadExtractor`, and persists normalized raw entities as JSON. A development
-worker command processes queued jobs; the adapter interface makes a licensed or
-on-premise DWG provider replaceable later without changing the API or UI.
+worker command processes queued jobs; the adapter interface keeps the DWG
+provider replaceable without changing the API or UI.
 
-The first extractor is fixture-backed rather than a fake DWG parser. Fixtures
-are JSON representations of native extraction output and are selected only in
-development/test mode. Real `.dwg` uploads are stored and accepted by the
-workflow, but remain in `requires_review` with a clear “provider not configured”
-failure until a real extractor is installed. This avoids silently presenting
-fixture data as facts about an uploaded drawing.
+AutoCAD desktop is not part of the system. A production deployment will use a
+non-AutoCAD `CadExtractor` provider: LibreDWG/WebAssembly is a viable open-source
+option where GPL licensing is acceptable, while ODA Drawings SDK is the commercial
+option when broader DWG-version coverage and a closed-product license are
+required. Both remain isolated behind the same worker adapter. The checked-in
+development provider is fixture-backed rather than a fake DWG parser: fixtures
+are explicit native-extraction outputs used only for deterministic tests and
+demo verification. Real `.dwg` uploads are stored and accepted by the workflow,
+but fail safely with `REAL_EXTRACTOR_NOT_CONFIGURED` until a real provider is
+configured. This avoids presenting fixture data as facts about an uploaded
+drawing.
+
+The milestone also includes a deterministic component classifier. It uses block
+names/attributes first, then geometry signatures and nearby text, and emits
+controlled categories such as `circuit_breaker`, `fuse`, `contactor_coil`,
+`relay_contact`, `terminal_block`, `motor`, `push_button`, `indicator_light`,
+`ground`, and `unknown`. A classifier result is never silently confirmed: it
+stores confidence, identification method, evidence, source handles, and a
+review status. AI is not required for exact block mappings or template matches.
 
 ## Domain model
 
@@ -41,6 +54,8 @@ Persist these records in the first slice:
   count, error code/message, timestamps, and idempotency key.
 - `RawCadExtraction`: one versioned normalized JSON document per successful
   extraction, linked to the drawing and job.
+- `ComponentCandidate`: one candidate component with category, confidence,
+  identification method, evidence, source handles, and review status.
 
 The normalized extraction schema preserves source handles and source drawing ID.
 It includes metadata, layouts, layers, block definitions, block references,
@@ -61,9 +76,13 @@ inventory or BOM schema.
    updates `extracting`, then `generating_results`, and finally `completed` for
    fixture-backed input or `failed` with a safe actionable error when no real
    extractor is configured.
-5. `GET /api/drawings/:drawingId` returns drawing, job, and extraction summary.
+5. The worker classifies candidates from normalized entities and persists them
+   separately from raw extraction. `GET /api/drawings/:drawingId` returns
+   drawing, job, extraction summary, and candidate counts.
    `GET /api/drawings/:drawingId/entities` returns normalized raw entities only
-   after authorization and successful extraction.
+   after authorization and successful extraction. `GET
+   /api/drawings/:drawingId/components` returns candidate classifications and
+   their evidence.
 6. The UI uploads with `XMLHttpRequest` so it can display byte progress, then
    polls the status endpoint and renders explicit uploading, queued, processing,
    failed, completed, and raw-entity states.
@@ -97,11 +116,11 @@ electrical recognition.
 
 ## Later milestones
 
-The next boundary consumes `RawCadExtraction` and adds structure classification,
-non-component regions, block/attribute extraction, exploded-symbol grouping,
-wire classification, template matching, text association, symbol instances,
-devices, terminals/nets, review corrections, annotated overlays, inventory, BOM,
-and JSON/CSV exports. Every later result must retain confidence, method, source
-handles, original/corrected values, and review status. No later milestone may
-replace deterministic native extraction with screenshot-only vision inference.
-
+The next boundary consumes `RawCadExtraction` and `ComponentCandidate` and adds
+structure classification, non-component regions, more complete block/attribute
+extraction, exploded-symbol grouping, wire classification, template matching,
+text association, symbol instances, devices, terminals/nets, review corrections,
+annotated overlays, inventory, BOM, and JSON/CSV exports. Every later result must
+retain confidence, method, source handles, original/corrected values, and review
+status. No later milestone may replace deterministic native extraction with
+screenshot-only vision inference.
