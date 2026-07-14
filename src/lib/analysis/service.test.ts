@@ -249,4 +249,41 @@ describe("demo analysis service", () => {
     expect(snapshot?.job?.status).toBe("failed");
     expect(snapshot?.job?.progress).toBe(68);
   });
+
+  it("persists native CAD evidence and BOM before visual analysis runs", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Native before vision" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "native-first.dxf",
+      safeFilename: "native-first.dxf",
+      storageKey: "fixtures/cad/synthetic-control-panel.dxf",
+      sourceType: "dxf",
+      byteSize: 100,
+    });
+    const context = {
+      entities: [], blockDefinitions: {}, layers: ["0"], blockNames: [], warnings: [],
+      extents: { minX: 0, minY: 0, maxX: 100, maxY: 120 },
+      texts: [
+        { value: "序号", layer: "0", handle: "h1", position: { x: 2, y: 100 } }, { value: "符号", layer: "0", handle: "h2", position: { x: 12, y: 100 } },
+        { value: "名称", layer: "0", handle: "h3", position: { x: 32, y: 100 } }, { value: "型号规格", layer: "0", handle: "h4", position: { x: 62, y: 100 } },
+        { value: "数量", layer: "0", handle: "h5", position: { x: 88, y: 100 } }, { value: "备注", layer: "0", handle: "h6", position: { x: 96, y: 100 } },
+        { value: "1", layer: "0", handle: "r1", position: { x: 2, y: 90 } }, { value: "KC1,2,3", layer: "0", handle: "r2", position: { x: 12, y: 90 } },
+        { value: "电流继电器", layer: "0", handle: "r3", position: { x: 32, y: 90 } }, { value: "LL-61E/5", layer: "0", handle: "r4", position: { x: 62, y: 90 } },
+        { value: "3", layer: "0", handle: "r5", position: { x: 88, y: 90 } },
+      ],
+    };
+    const renderer: CadRenderAdapter = { async render() { return { overviewImageUrl: "data:image/png;base64,test", width: 100, height: 120, tiles: [], metadata: { context } }; } };
+    const analyzer: DrawingVisionAnalyzer = { async analyze() { throw new Error("VISION_SHOULD_FAIL"); } };
+
+    await expect(runDrawingAnalysis(drawing.id, "demo-user", { renderer, analyzer, analysisMode: "vision", sourcePathResolver: () => "unused", delayMs: 0 })).resolves.toMatchObject({
+      status: "requires_review",
+      structuralOnly: true,
+      bomItems: [{ description: "电流继电器", quantity: 3 }],
+    });
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.drawing.structuralSnapshot).toMatchObject({ schemaVersion: 1, counts: { bomRows: 1 } });
+    expect(snapshot?.bomItems).toMatchObject([{ description: "电流继电器", modelNumber: "LL-61E/5", quantity: 3 }]);
+    expect(snapshot?.job).toMatchObject({ status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
+  });
 });

@@ -9,11 +9,14 @@ import { appendMessage, listMessages } from "@/lib/repositories/messages";
 import {
   createDrawingUpload,
   getAnalysisSnapshot,
+  listStructuralDrawings,
+  saveStructuralSnapshot,
   updateAnalysisStatus,
 } from "@/lib/repositories/drawings";
 import {
   generateBom,
   removeComponent,
+  replaceBomFromNativeRows,
   replaceComponents,
   replacePhysicalDevices,
   updateComponent,
@@ -106,6 +109,48 @@ describe("drawing analysis persistence", () => {
     const afterRemoval = await getAnalysisSnapshot(drawing.id, "demo-user");
     expect(afterRemoval).not.toBeNull();
     expect(afterRemoval?.components[0]?.removedAt).not.toBeNull();
+  });
+
+  it("persists structural CAD snapshots and lists them only for the requested owner", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Native evidence" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "M-T1-02.dwg",
+      safeFilename: "M-T1-02.dwg",
+      storageKey: "demo/M-T1-02.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+    });
+    const structuralSnapshot = {
+      schemaVersion: 1 as const,
+      counts: { entities: 10, texts: 8, blocks: 1, layers: 2, structuralTags: 3, bomRows: 1 },
+      tags: [],
+      bomRows: [{ itemNumber: 5, rawSymbol: "KC1,2,3", symbolTags: ["KC1", "KC2", "KC3"], name: "电流继电器", modelSpec: "LL-61E/□", quantity: 3, cadPosition: { x: 1, y: 2 }, evidenceHandles: ["20C6"] }],
+      reviewIssues: [],
+    };
+
+    expect(await saveStructuralSnapshot(drawing.id, "other-user", structuralSnapshot)).toBe(false);
+    expect(await saveStructuralSnapshot(drawing.id, "demo-user", structuralSnapshot)).toBe(true);
+    expect((await getAnalysisSnapshot(drawing.id, "demo-user"))?.drawing.structuralSnapshot).toMatchObject({ schemaVersion: 1 });
+    expect(await listStructuralDrawings("other-user")).toEqual([]);
+    expect(await listStructuralDrawings("demo-user")).toMatchObject([
+      { id: drawing.id, originalFilename: "M-T1-02.dwg", structuralSnapshot: { schemaVersion: 1 } },
+    ]);
+  });
+
+  it("replaces the visible BOM with native CAD table rows", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Native BOM" });
+    const drawing = await createDrawingUpload({ conversationId: conversation.id, ownerScope: "demo-user", originalFilename: "native.dwg", safeFilename: "native.dwg", storageKey: "demo/native.dwg", sourceType: "dwg", byteSize: 1 });
+    const result = await replaceBomFromNativeRows(drawing.id, "demo-user", [
+      { itemNumber: 5, rawSymbol: "KC1,2,3", symbolTags: ["KC1", "KC2", "KC3"], name: "电流继电器", modelSpec: "LL-61E/□", quantity: 3, cadPosition: { x: 1, y: 2 }, evidenceHandles: ["a"] },
+      { itemNumber: 6, rawSymbol: "KC4", symbolTags: ["KC4"], name: "电流继电器", modelSpec: "LL-63E/□", quantity: 1, cadPosition: { x: 1, y: 1 }, evidenceHandles: ["b"] },
+    ]);
+
+    expect(result?.items).toMatchObject([
+      { itemNumber: 5, category: "relay", description: "电流继电器", modelNumber: "LL-61E/□", quantity: 3, reviewStatus: "confirmed" },
+      { itemNumber: 6, category: "relay", description: "电流继电器", modelNumber: "LL-63E/□", quantity: 1, reviewStatus: "confirmed" },
+    ]);
   });
 
   it("persists tagged symbol occurrences as physical devices and counts devices in the BOM", async () => {
