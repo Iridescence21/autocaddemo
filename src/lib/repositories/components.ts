@@ -61,7 +61,7 @@ export async function updateComponent(
     });
     await regroupActivePhysicalDevicesInTransaction(tx, drawingId, ownerScope);
     await generateBomInTransaction(tx, drawingId);
-    return updated;
+    return tx.componentCandidate.findUnique({ where: { id: updated.id } });
   });
 }
 
@@ -113,7 +113,7 @@ export async function replacePhysicalDevicesInTransaction(
 
   await tx.componentCandidate.updateMany({
     where: { drawingId, physicalDeviceId: { not: null } },
-    data: { physicalDeviceId: null },
+    data: { physicalDeviceId: null, physicalDeviceDrawingId: null },
   });
   await tx.physicalDevice.deleteMany({ where: { drawingId } });
   for (const device of devices) {
@@ -141,7 +141,7 @@ export async function replacePhysicalDevicesInTransaction(
           : { temporaryId: { in: device.occurrenceTemporaryIds } }),
         drawing: { ownerScope },
       },
-      data: { physicalDeviceId: physicalDevice.id },
+      data: { physicalDeviceId: physicalDevice.id, physicalDeviceDrawingId: drawingId },
     });
     const expectedLinks = device.occurrenceIds?.length ?? device.occurrenceTemporaryIds.length;
     if (linked.count !== expectedLinks) throw new Error("DEVICE_OCCURRENCE_NOT_FOUND");

@@ -84,6 +84,7 @@ model ComponentCandidate {
   method            String
   sourceTileId      String?
   physicalDeviceId  String?
+  physicalDeviceDrawingId String?
   location          Json
   reviewStatus      String   @default("requires_review")
   originalCategory  String?
@@ -92,7 +93,7 @@ model ComponentCandidate {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   drawing           Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
-  physicalDevice    PhysicalDevice? @relation(fields: [physicalDeviceId, drawingId], references: [id, drawingId], onDelete: Restrict)
+  physicalDevice    PhysicalDevice? @relation(fields: [physicalDeviceId, physicalDeviceDrawingId], references: [id, drawingId], onDelete: SetNull)
 
   @@index([drawingId, reviewStatus])
 }

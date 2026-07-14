@@ -159,7 +159,7 @@ describe("drawing analysis persistence", () => {
       ],
     });
     await prisma.$transaction([
-      prisma.componentCandidate.updateMany({ where: { drawingId: drawing.id }, data: { physicalDeviceId: null } }),
+      prisma.componentCandidate.updateMany({ where: { drawingId: drawing.id }, data: { physicalDeviceId: null, physicalDeviceDrawingId: null } }),
       prisma.physicalDevice.deleteMany({ where: { drawingId: drawing.id } }),
     ]);
 
@@ -189,10 +189,14 @@ describe("drawing analysis persistence", () => {
 
     const contact = initial?.components.find((component) => component.temporaryId === "KA1-contact");
     if (!contact) throw new Error("contact missing");
-    await updateComponent(drawing.id, contact.id, "demo-user", { tag: "KA2" });
+    const oldPhysicalDeviceId = contact.physicalDeviceId;
+    const returned = await updateComponent(drawing.id, contact.id, "demo-user", { tag: "KA2" });
     const afterEdit = await getAnalysisSnapshot(drawing.id, "demo-user");
     expect(afterEdit?.physicalDevices).toHaveLength(2);
     expect(afterEdit?.bomItems.reduce((total, item) => total + item.quantity, 0)).toBe(2);
+    const persistedContact = afterEdit?.components.find((component) => component.id === contact.id);
+    expect(returned?.physicalDeviceId).toBe(persistedContact?.physicalDeviceId);
+    expect(returned?.physicalDeviceId).not.toBe(oldPhysicalDeviceId);
 
     await removeComponent(drawing.id, contact.id, "demo-user");
     const afterRemoval = await getAnalysisSnapshot(drawing.id, "demo-user");
@@ -229,8 +233,48 @@ describe("drawing analysis persistence", () => {
 
     await expect(prisma.componentCandidate.update({
       where: { id: first.components[0].id },
-      data: { physicalDeviceId: second.physicalDevices[0].id },
+      data: { physicalDeviceId: second.physicalDevices[0].id, physicalDeviceDrawingId: drawingA.id },
     })).rejects.toThrow();
+  });
+
+  it("keeps an occurrence when its physical device is directly deleted", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Direct device deletion" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "direct-delete.dwg",
+      safeFilename: "direct-delete.dwg",
+      storageKey: "demo/direct-delete.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+    const before = await getAnalysisSnapshot(drawing.id, "demo-user");
+    if (!before?.physicalDevices[0]) throw new Error("physical device missing");
+
+    await prisma.physicalDevice.delete({ where: { id: before.physicalDevices[0].id } });
+    const after = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(after?.components).toHaveLength(1);
+    expect(after?.components[0]).toMatchObject({ physicalDeviceId: null, physicalDeviceDrawingId: null });
+  });
+
+  it("cascades drawing deletion through linked devices and occurrences", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Cascade deletion" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "cascade.dwg",
+      safeFilename: "cascade.dwg",
+      storageKey: "demo/cascade.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+
+    await deleteConversation(conversation.id, "demo-user");
+    expect(await prisma.drawing.findUnique({ where: { id: drawing.id } })).toBeNull();
+    expect(await prisma.componentCandidate.count({ where: { drawingId: drawing.id } })).toBe(0);
+    expect(await prisma.physicalDevice.count({ where: { drawingId: drawing.id } })).toBe(0);
   });
 
   it("rejects duplicate new occurrence IDs before replacing existing rows", async () => {
