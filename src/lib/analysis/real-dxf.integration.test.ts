@@ -27,7 +27,7 @@ async function createDxfDrawing() {
 
 const fakeAnalyzer: DrawingVisionAnalyzer = {
   async analyze({ rendered }) {
-    const physical = { x: 0.5, y: 0.4, width: 0.06, height: 0.08 };
+    const physical = { x: 0.452, y: 0.11, width: 0.06, height: 0.08 };
     const detections = rendered.tiles.slice(0, 2).map((tile, index) => ({
       temporaryId: `KM1-${index + 1}`,
       category: "contactor" as const,
@@ -78,7 +78,8 @@ describe("real DXF analysis pipeline", () => {
     expect(result.status).toBe("requires_review");
     expect(result.components).toHaveLength(1);
     expect(result.components[0].tag).toBe("KM1");
-    expect(result.components[0].method).toBe("openai_vision");
+    expect(result.components[0].method).toBe("hybrid_cad_vision");
+    expect(result.components[0].evidence).toContain("CAD原生文字 KM1（句柄 22，图层 SYMBOL）");
     expect(result.bomItems).toHaveLength(1);
     const messages = await listMessages(conversation.id, "demo-user");
     expect(messages.some((message) => message.type === "analysis_progress" && JSON.stringify(message.payload).includes("识别可能的电气元件"))).toBe(true);

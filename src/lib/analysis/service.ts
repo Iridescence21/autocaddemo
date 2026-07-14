@@ -12,6 +12,8 @@ import type { CadRenderAdapter, CadSourceType, DemoAnalysisResult, RenderedCadDr
 import { openAiVisionAnalyzer, VisionAnalysisError } from "@/lib/vision/openai-analyzer";
 import type { DrawingVisionAnalyzer, ValidatedVisionResult, VisionAnalysisDiagnostics } from "@/lib/vision/types";
 import { consolidateVisionComponents } from "@/lib/vision/consolidate";
+import { buildStructuralEvidence } from "@/lib/cad/structural-evidence";
+import { fuseCadAndVisionComponents } from "@/lib/vision/fuse-cad-vision";
 import { formatCategorizedComponents } from "@/lib/presentation/component-list";
 
 type AnalyzerResult = DemoAnalysisResult | ValidatedVisionResult;
@@ -61,7 +63,12 @@ export async function selectDefaultAdapters(
 }
 
 function componentsFromAnalysis(mode: AnalysisMode, analysis: AnalyzerResult, rendered: RenderedCadDrawing): ComponentInput[] {
-  if (mode === "vision") return consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
+  if (mode === "vision") {
+    const visualComponents = consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
+    const context = rendered.metadata?.context;
+    if (!context) return visualComponents;
+    return fuseCadAndVisionComponents(visualComponents, buildStructuralEvidence(context, rendered));
+  }
   return (analysis as DemoAnalysisResult).components;
 }
 
