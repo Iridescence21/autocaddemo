@@ -8,6 +8,7 @@ export type AnalysisTileOptions = {
 
 export const DEFAULT_ANALYSIS_TILE_OPTIONS: AnalysisTileOptions = { maxTiles: 24, overlapRatio: 0.1, targetEntitiesPerTile: 140 };
 const MAX_ANALYSIS_TILES = 64;
+const MAX_ANALYSIS_GRID_CELLS = MAX_ANALYSIS_TILES;
 const MAX_TARGET_ENTITIES_PER_TILE = 2000;
 const MAX_OVERLAP_RATIO = 0.5;
 
@@ -33,7 +34,7 @@ function bounds(points: DxfPoint[]): DxfExtents | undefined {
   };
 }
 
-function sampledArcPoints(center: DxfPoint, radiusX: number, radiusY: number, start: number, end: number) {
+function sampledArcPoints(center: DxfPoint, radiusX: number, radiusY: number, start: number, end: number, rotation = 0) {
   let from = start;
   let to = end;
   if (to <= from) to += Math.PI * 2;
@@ -41,7 +42,9 @@ function sampledArcPoints(center: DxfPoint, radiusX: number, radiusY: number, st
   const steps = Math.max(12, Math.ceil((to - from) / (Math.PI / 18)));
   return Array.from({ length: steps + 1 }, (_, index) => {
     const angle = from + (to - from) * (index / steps);
-    return { x: center.x + Math.cos(angle) * radiusX, y: center.y + Math.sin(angle) * radiusY };
+    const x = Math.cos(angle) * radiusX;
+    const y = Math.sin(angle) * radiusY;
+    return { x: center.x + x * Math.cos(rotation) - y * Math.sin(rotation), y: center.y + x * Math.sin(rotation) + y * Math.cos(rotation) };
   });
 }
 
@@ -53,7 +56,7 @@ export function getEntityBounds(entity: NormalizedDxfEntity, drawing: Normalized
   if (entity.type === "ARC") return bounds(sampledArcPoints(entity.center, entity.radius, entity.radius, entity.startAngle, entity.endAngle));
   if (entity.type === "ELLIPSE") {
     const major = Math.hypot(entity.majorAxis.x, entity.majorAxis.y);
-    return bounds(sampledArcPoints(entity.center, major, major * entity.axisRatio, entity.startAngle, entity.endAngle));
+    return bounds(sampledArcPoints(entity.center, major, major * entity.axisRatio, entity.startAngle, entity.endAngle, Math.atan2(entity.majorAxis.y, entity.majorAxis.x)));
   }
   if (entity.type === "TEXT" || entity.type === "MTEXT") {
     return {
@@ -96,6 +99,18 @@ export function normalizeAnalysisTileOptions(options: AnalysisTileOptions): Anal
   return { maxTiles, overlapRatio, targetEntitiesPerTile };
 }
 
+export function getAnalysisTileGrid(desired: number, aspect: number) {
+  const safeDesired = Math.min(MAX_ANALYSIS_GRID_CELLS, Math.max(1, Math.floor(desired)));
+  const safeAspect = Number.isFinite(aspect) ? Math.max(0.1, aspect) : MAX_ANALYSIS_GRID_CELLS;
+  let columns = Math.min(MAX_ANALYSIS_GRID_CELLS, Math.max(1, Math.ceil(Math.sqrt(safeDesired * safeAspect))));
+  let rows = Math.max(1, Math.ceil(safeDesired / columns));
+  while (rows * columns > MAX_ANALYSIS_GRID_CELLS && columns > 1) {
+    columns -= 1;
+    rows = Math.max(1, Math.ceil(safeDesired / columns));
+  }
+  return { rows, columns };
+}
+
 function buildOccupiedCells(drawing: NormalizedDxfDrawing, rows: number, columns: number, overlapRatio: number): OccupiedCell[] {
   const cellWidth = (drawing.extents.maxX - drawing.extents.minX) / columns;
   const cellHeight = (drawing.extents.maxY - drawing.extents.minY) / rows;
@@ -136,8 +151,7 @@ export function planAnalysisTiles(drawing: NormalizedDxfDrawing, options: Analys
   const drawingWidth = Math.max(1, drawing.extents.maxX - drawing.extents.minX);
   const drawingHeight = Math.max(1, drawing.extents.maxY - drawing.extents.minY);
   const aspect = Math.max(0.1, drawingWidth / drawingHeight);
-  const columns = Math.max(1, Math.ceil(Math.sqrt(desired * aspect)));
-  const rows = Math.max(1, Math.ceil(desired / columns));
+  const { columns, rows } = getAnalysisTileGrid(desired, aspect);
   const occupied = buildOccupiedCells(drawing, rows, columns, normalizedOptions.overlapRatio);
   const limited = desiredWithoutLimit > MAX_ANALYSIS_TILES || occupied.length > normalizedOptions.maxTiles;
   return {

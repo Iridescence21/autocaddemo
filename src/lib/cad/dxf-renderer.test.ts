@@ -6,6 +6,10 @@ import { createDxfRenderer, dxfRenderer, readCadAnalysisTileConfig } from "@/lib
 
 const fixture = resolve(process.cwd(), "fixtures/cad/synthetic-control-panel.dxf");
 
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 describe("DXF renderer", () => {
   it("renders normalized geometry and escaped text to SVG", async () => {
     const drawing = await parseDxfFile(fixture);
@@ -71,5 +75,43 @@ describe("DXF renderer", () => {
     });
 
     await expect(renderer.render({ drawingId: "drawing-total-failure", sourcePath: fixture, sourceType: "dxf" })).rejects.toThrow("DXF_ANALYSIS_TILE_RENDER_FAILED");
+  });
+
+  it("retains a timed-out raster slot until its underlying operation settles", async () => {
+    let activeRasters = 0;
+    let maxActiveRasters = 0;
+    const releases = new Map<string, () => void>();
+    const started: string[] = [];
+    const renderer = createDxfRenderer({
+      environment: {
+        CAD_ANALYSIS_TARGET_ENTITIES_PER_TILE: "1",
+        CAD_ANALYSIS_TILE_RENDER_CONCURRENCY: "2",
+        CAD_ANALYSIS_TILE_RENDER_TIMEOUT_MS: "100",
+      },
+      rasterizeTile: async (_svg, tile) => {
+        started.push(tile.id);
+        activeRasters += 1;
+        maxActiveRasters = Math.max(maxActiveRasters, activeRasters);
+        if (started.length <= 2) {
+          return new Promise<Buffer>((resolve) => releases.set(tile.id, () => {
+            activeRasters -= 1;
+            resolve(Buffer.from(tile.id));
+          }));
+        }
+        activeRasters -= 1;
+        return Buffer.from(tile.id);
+      },
+    });
+
+    const render = renderer.render({ drawingId: "drawing-retained-slot", sourcePath: fixture, sourceType: "dxf" });
+    while (started.length < 2) await delay(5);
+    await delay(125);
+
+    expect(started).toHaveLength(2);
+    expect(maxActiveRasters).toBe(2);
+    releases.get(started[0])?.();
+    releases.get(started[1])?.();
+    await render;
+    expect(maxActiveRasters).toBe(2);
   });
 });

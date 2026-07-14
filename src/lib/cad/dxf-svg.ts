@@ -32,7 +32,7 @@ function insertMatrix(entity: Extract<NormalizedDxfEntity, { type: "INSERT" }>):
   return [cosine * entity.scaleX, sine * entity.scaleX, -sine * entity.scaleY, cosine * entity.scaleY, entity.position.x, entity.position.y];
 }
 
-function sampledArc(center: DxfPoint, radiusX: number, radiusY: number, start: number, end: number, matrix: Affine) {
+function sampledArc(center: DxfPoint, radiusX: number, radiusY: number, start: number, end: number, matrix: Affine, rotation = 0) {
   let from = start;
   let to = end;
   if (to <= from) to += Math.PI * 2;
@@ -40,7 +40,9 @@ function sampledArc(center: DxfPoint, radiusX: number, radiusY: number, start: n
   const steps = Math.max(12, Math.ceil((to - from) / (Math.PI / 18)));
   return Array.from({ length: steps + 1 }, (_, index) => {
     const angle = from + (to - from) * (index / steps);
-    return transform({ x: center.x + Math.cos(angle) * radiusX, y: center.y + Math.sin(angle) * radiusY }, matrix);
+    const x = Math.cos(angle) * radiusX;
+    const y = Math.sin(angle) * radiusY;
+    return transform({ x: center.x + x * Math.cos(rotation) - y * Math.sin(rotation), y: center.y + x * Math.sin(rotation) + y * Math.cos(rotation) }, matrix);
   });
 }
 
@@ -91,7 +93,7 @@ export function renderDxfSvg(drawing: NormalizedDxfDrawing, options: SvgOptions 
     }
     if (entity.type === "ELLIPSE") {
       const major = Math.hypot(entity.majorAxis.x, entity.majorAxis.y);
-      return `<polyline points="${pointList(sampledArc(entity.center, major, major * entity.axisRatio, entity.startAngle, entity.endAngle, parent))}" ${style}/>`;
+      return `<polyline points="${pointList(sampledArc(entity.center, major, major * entity.axisRatio, entity.startAngle, entity.endAngle, parent, Math.atan2(entity.majorAxis.y, entity.majorAxis.x)))}" ${style}/>`;
     }
     if (entity.type === "TEXT" || entity.type === "MTEXT") {
       const position = screen(transform(entity.position, parent));

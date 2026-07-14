@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getEntityBounds, normalizeAnalysisTileOptions, planAnalysisTiles } from "@/lib/cad/analysis-tiles";
+import { getAnalysisTileGrid, getEntityBounds, normalizeAnalysisTileOptions, planAnalysisTiles } from "@/lib/cad/analysis-tiles";
+import { renderDxfSvg } from "@/lib/cad/dxf-svg";
 import type { DxfExtents, NormalizedDxfDrawing, NormalizedDxfEntity } from "@/lib/cad/dxf-types";
 
 function denseDrawing({
@@ -63,6 +64,23 @@ describe("planAnalysisTiles", () => {
 
     expect(getEntityBounds(arc, drawing)).toMatchObject({ minX: 50, minY: 50, maxX: 60, maxY: 60 });
     expect(getEntityBounds(ellipse, drawing)).toMatchObject({ minX: 50, minY: 50, maxX: 60, maxY: 55 });
+  });
+
+  it("caps grid cells for an extreme drawing aspect ratio", () => {
+    const grid = getAnalysisTileGrid(64, Number.MAX_VALUE);
+
+    expect(grid.rows * grid.columns).toBeLessThanOrEqual(64);
+    expect(grid.columns).toBeLessThanOrEqual(64);
+  });
+
+  it("rotates ELLIPSE bounds and SVG points using majorAxis direction", () => {
+    const drawing = denseDrawing({ entities: 0 });
+    const ellipse: NormalizedDxfEntity = { type: "ELLIPSE", layer: "0", handle: "rotated", center: { x: 50, y: 50 }, majorAxis: { x: 0, y: 10 }, axisRatio: 0.5, startAngle: 0, endAngle: Math.PI * 2 };
+    drawing.entities = [ellipse];
+    drawing.extents = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+
+    expect(getEntityBounds(ellipse, drawing)).toMatchObject({ minX: 45, minY: 40, maxX: 55, maxY: 60 });
+    expect(renderDxfSvg(drawing, { maxWidth: 100, maxHeight: 100, padding: 0 }).svg).toContain('points="50.00,40.00');
   });
 
   it("orders occupied cells top-to-bottom and counts text and INSERT entities", () => {
