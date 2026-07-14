@@ -23,6 +23,7 @@ export async function resetTestDatabase() {
     prisma.drawingExport.deleteMany(),
     prisma.bomItem.deleteMany(),
     prisma.componentCandidate.deleteMany(),
+    prisma.physicalDevice.deleteMany(),
     prisma.analysisJob.deleteMany(),
     prisma.drawingMessage.deleteMany(),
     prisma.drawing.deleteMany(),

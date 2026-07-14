@@ -1,6 +1,8 @@
 import type { ComponentInput } from "@/lib/domain";
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client/index";
+import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
+import { replacePhysicalDevicesInTransaction } from "@/lib/repositories/components";
 
 export async function createDrawingUpload(input: {
   conversationId: string;
@@ -26,10 +28,13 @@ export async function createDrawingUpload(input: {
         byteSize: input.byteSize,
         status: "uploaded",
         analysisJob: { create: { status: "queued", stage: "等待分析", progress: 0 } },
-        components: input.initialComponents ? { create: input.initialComponents.map(componentData) } : undefined,
       },
       include: { analysisJob: true },
     });
+    if (input.initialComponents?.length) {
+      await tx.componentCandidate.createMany({ data: input.initialComponents.map((component) => ({ ...componentData(component), drawingId: drawing.id })) });
+      await replacePhysicalDevicesInTransaction(tx, drawing.id, input.ownerScope, groupPhysicalDevices(toDeviceOccurrences(input.initialComponents)));
+    }
     await tx.drawingConversation.update({ where: { id: input.conversationId }, data: { status: "queued" } });
     return drawing;
   });
@@ -83,10 +88,36 @@ export async function saveDrawingPreview(drawingId: string, ownerScope: string, 
 export async function getAnalysisSnapshot(drawingId: string, ownerScope: string) {
   const drawing = await prisma.drawing.findFirst({
     where: { id: drawingId, ownerScope },
-    include: { analysisJob: true, components: { orderBy: { createdAt: "asc" } }, bomItems: { orderBy: { itemNumber: "asc" } } },
+    include: {
+      analysisJob: true,
+      components: { orderBy: { createdAt: "asc" } },
+      physicalDevices: { orderBy: { createdAt: "asc" } },
+      bomItems: { orderBy: { itemNumber: "asc" } },
+    },
   });
   if (!drawing) return null;
-  return { drawing, job: drawing.analysisJob, components: drawing.components, bomItems: drawing.bomItems };
+  return {
+    drawing,
+    job: drawing.analysisJob,
+    components: drawing.components,
+    physicalDevices: drawing.physicalDevices,
+    bomItems: drawing.bomItems,
+  };
+}
+
+function toDeviceOccurrences(components: ComponentInput[]): DeviceOccurrence[] {
+  return components.map((component) => ({
+    temporaryId: component.temporaryId,
+    category: component.category,
+    tag: component.tag ?? null,
+    description: component.description,
+    specifications: component.specifications,
+    manufacturer: component.manufacturer ?? null,
+    modelNumber: component.modelNumber ?? null,
+    confidence: component.confidence,
+    evidence: component.evidence,
+    reviewStatus: component.reviewStatus,
+  }));
 }
 
 export async function getJobSnapshot(jobId: string, ownerScope: string) {

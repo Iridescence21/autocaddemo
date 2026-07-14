@@ -67,3 +67,18 @@ export type ComponentInput = {
   sourceTileId?: string | null;
   location?: { x: number; y: number; width: number; height: number };
 };
+
+export type PhysicalDeviceInput = {
+  temporaryId: string;
+  tag: string | null;
+  category: ComponentCategory;
+  description: string;
+  specifications: string[];
+  manufacturer: string | null;
+  modelNumber: string | null;
+  confidence: number;
+  evidence: string[];
+  reviewStatus: ReviewStatus;
+  quantity: 1;
+  occurrenceTemporaryIds: string[];
+};

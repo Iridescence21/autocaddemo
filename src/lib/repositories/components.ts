@@ -1,15 +1,19 @@
 import { prisma } from "@/lib/db";
-import type { Prisma } from "@prisma/client/index";
-import type { ComponentInput } from "@/lib/domain";
+import type { ComponentCandidate, PhysicalDevice, Prisma } from "@prisma/client/index";
+import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
+import type { ComponentInput, PhysicalDeviceInput } from "@/lib/domain";
 
 export async function replaceComponents(drawingId: string, ownerScope: string, components: ComponentInput[]) {
-  const drawing = await prisma.drawing.findFirst({ where: { id: drawingId, ownerScope } });
-  if (!drawing) return [];
-  await prisma.componentCandidate.deleteMany({ where: { drawingId } });
-  if (components.length) {
-    await prisma.componentCandidate.createMany({ data: components.map((component) => ({ ...componentData(component), drawingId })) });
-  }
-  return prisma.componentCandidate.findMany({ where: { drawingId }, orderBy: { createdAt: "asc" } });
+  return prisma.$transaction(async (tx) => {
+    const drawing = await tx.drawing.findFirst({ where: { id: drawingId, ownerScope } });
+    if (!drawing) return [];
+    await tx.componentCandidate.deleteMany({ where: { drawingId } });
+    if (components.length) {
+      await tx.componentCandidate.createMany({ data: components.map((component) => ({ ...componentData(component), drawingId })) });
+    }
+    await replacePhysicalDevicesInTransaction(tx, drawingId, ownerScope, groupPhysicalDevices(toDeviceOccurrences(components)));
+    return tx.componentCandidate.findMany({ where: { drawingId }, orderBy: { createdAt: "asc" } });
+  });
 }
 
 function componentData(component: ComponentInput) {
@@ -55,15 +59,78 @@ export async function removeComponent(drawingId: string, componentId: string, ow
   return result.count > 0;
 }
 
-export async function generateBom(drawingId: string, ownerScope: string) {
-  const drawing = await prisma.drawing.findFirst({ where: { id: drawingId, ownerScope }, include: { components: true } });
+export async function replacePhysicalDevices(
+  drawingId: string,
+  ownerScope: string,
+  devices: PhysicalDeviceInput[],
+): Promise<PhysicalDevice[]> {
+  return prisma.$transaction(async (tx) => {
+    const physicalDevices = await replacePhysicalDevicesInTransaction(tx, drawingId, ownerScope, devices);
+    return physicalDevices ?? [];
+  });
+}
+
+export async function replacePhysicalDevicesInTransaction(
+  tx: Prisma.TransactionClient,
+  drawingId: string,
+  ownerScope: string,
+  devices: PhysicalDeviceInput[],
+): Promise<PhysicalDevice[] | null> {
+  const drawing = await tx.drawing.findFirst({ where: { id: drawingId, ownerScope } });
   if (!drawing) return null;
-  const active = drawing.components.filter((component) => !component.removedAt);
+
+  const assignedOccurrenceIds = new Set<string>();
+  await tx.physicalDevice.deleteMany({ where: { drawingId } });
+  for (const device of devices) {
+    for (const occurrenceTemporaryId of device.occurrenceTemporaryIds) {
+      if (assignedOccurrenceIds.has(occurrenceTemporaryId)) throw new Error("DUPLICATE_DEVICE_OCCURRENCE");
+      assignedOccurrenceIds.add(occurrenceTemporaryId);
+    }
+    const physicalDevice = await tx.physicalDevice.create({
+      data: {
+        drawingId,
+        temporaryId: device.temporaryId,
+        tag: device.tag,
+        category: device.category,
+        description: device.description,
+        manufacturer: device.manufacturer,
+        modelNumber: device.modelNumber,
+        specifications: jsonValue(device.specifications),
+        confidence: device.confidence,
+        evidence: jsonValue(device.evidence),
+        reviewStatus: device.reviewStatus,
+        quantity: device.quantity,
+      },
+    });
+    const linked = await tx.componentCandidate.updateMany({
+      where: {
+        drawingId,
+        temporaryId: { in: device.occurrenceTemporaryIds },
+        drawing: { ownerScope },
+      },
+      data: { physicalDeviceId: physicalDevice.id },
+    });
+    if (linked.count !== device.occurrenceTemporaryIds.length) throw new Error("DEVICE_OCCURRENCE_NOT_FOUND");
+  }
+  return tx.physicalDevice.findMany({ where: { drawingId }, orderBy: { createdAt: "asc" } });
+}
+
+export async function generateBom(drawingId: string, ownerScope: string) {
+  const drawing = await prisma.drawing.findFirst({
+    where: { id: drawingId, ownerScope },
+    include: { components: true, physicalDevices: { include: { occurrences: true } } },
+  });
+  if (!drawing) return null;
+  if (!drawing.physicalDevices.length && drawing.components.length) {
+    await replacePhysicalDevices(drawingId, ownerScope, groupPhysicalDevices(toDeviceOccurrencesFromPersisted(drawing.components)));
+    return generateBom(drawingId, ownerScope);
+  }
+  const active = drawing.physicalDevices.filter((device) => device.occurrences.some((occurrence) => !occurrence.removedAt));
   const groups = new Map<string, typeof active>();
-  for (const component of active) {
-    const specs = JSON.stringify(component.specifications);
-    const key = [component.category, component.description, component.manufacturer ?? "", component.modelNumber ?? "", specs].join("|");
-    groups.set(key, [...(groups.get(key) ?? []), component]);
+  for (const device of active) {
+    const specs = JSON.stringify(device.specifications);
+    const key = [device.category, device.description, device.manufacturer ?? "", device.modelNumber ?? "", specs].join("|");
+    groups.set(key, [...(groups.get(key) ?? []), device]);
   }
   await prisma.bomItem.deleteMany({ where: { drawingId } });
   const items = [...groups.values()].map((group, index) => ({
@@ -80,4 +147,42 @@ export async function generateBom(drawingId: string, ownerScope: string) {
   }));
   if (items.length) await prisma.bomItem.createMany({ data: items });
   return { items: await prisma.bomItem.findMany({ where: { drawingId }, orderBy: { itemNumber: "asc" } }) };
+}
+
+function toDeviceOccurrences(components: ComponentInput[]): DeviceOccurrence[] {
+  return components.map((component) => ({
+    temporaryId: component.temporaryId,
+    category: component.category,
+    tag: component.tag ?? null,
+    description: component.description,
+    specifications: component.specifications,
+    manufacturer: component.manufacturer ?? null,
+    modelNumber: component.modelNumber ?? null,
+    confidence: component.confidence,
+    evidence: component.evidence,
+    reviewStatus: component.reviewStatus,
+  }));
+}
+
+function toDeviceOccurrencesFromPersisted(components: ComponentCandidate[]): DeviceOccurrence[] {
+  return components.map((component) => ({
+    temporaryId: component.temporaryId,
+    category: component.category as DeviceOccurrence["category"],
+    tag: component.tag,
+    description: component.description,
+    specifications: stringValues(component.specifications),
+    manufacturer: component.manufacturer,
+    modelNumber: component.modelNumber,
+    confidence: component.confidence,
+    evidence: stringValues(component.evidence),
+    reviewStatus: component.reviewStatus as DeviceOccurrence["reviewStatus"],
+  }));
+}
+
+function stringValues(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function jsonValue(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }

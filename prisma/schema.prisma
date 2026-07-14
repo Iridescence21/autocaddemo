@@ -51,6 +51,7 @@ model Drawing {
   conversation     DrawingConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   analysisJob      AnalysisJob?
   components       ComponentCandidate[]
+  physicalDevices  PhysicalDevice[]
   bomItems         BomItem[]
   exports          DrawingExport[]
 }
@@ -82,6 +83,7 @@ model ComponentCandidate {
   evidence          Json
   method            String
   sourceTileId      String?
+  physicalDeviceId  String?
   location          Json
   reviewStatus      String   @default("requires_review")
   originalCategory  String?
@@ -90,6 +92,30 @@ model ComponentCandidate {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   drawing           Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  physicalDevice    PhysicalDevice? @relation(fields: [physicalDeviceId], references: [id], onDelete: SetNull)
+
+  @@unique([drawingId, temporaryId])
+  @@index([drawingId, reviewStatus])
+}
+
+model PhysicalDevice {
+  id             String   @id @default(cuid())
+  drawingId      String
+  temporaryId    String
+  tag            String?
+  category       String
+  description    String
+  manufacturer   String?
+  modelNumber    String?
+  specifications Json
+  confidence     Float
+  evidence       Json
+  reviewStatus   String
+  quantity       Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  drawing        Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  occurrences    ComponentCandidate[]
 
   @@unique([drawingId, temporaryId])
   @@index([drawingId, reviewStatus])
