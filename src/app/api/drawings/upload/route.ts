@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { OWNER_SCOPE } from "@/lib/domain";
 import { createDrawingUpload } from "@/lib/repositories/drawings";
+import { getConversation } from "@/lib/repositories/conversations";
 import { appendMessage } from "@/lib/repositories/messages";
 import { storeCadUpload } from "@/lib/uploads/storage";
 import { validateCadUpload } from "@/lib/uploads/validation";
@@ -13,6 +14,9 @@ export async function POST(request: Request) {
   const conversationId = z.string().min(1).safeParse(form.get("conversationId"));
   const file = form.get("file");
   if (!conversationId.success || !(file instanceof File)) return NextResponse.json({ code: "INVALID_UPLOAD", message: "请选择一份 DWG 或 DXF 图纸。" }, { status: 400 });
+  const conversation = await getConversation(conversationId.data, OWNER_SCOPE);
+  if (!conversation) return NextResponse.json({ code: "CONVERSATION_NOT_FOUND", message: "未找到分析会话。" }, { status: 404 });
+  if (conversation.drawing) return NextResponse.json({ code: "CONVERSATION_ALREADY_HAS_DRAWING", message: "当前分析会话已有图纸。请新建分析后再上传。" }, { status: 409 });
   try {
     const bytes = Buffer.from(await file.arrayBuffer());
     const validated = validateCadUpload({ name: file.name, type: file.type, size: file.size, bytes });
