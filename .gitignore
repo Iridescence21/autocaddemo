@@ -9,3 +9,5 @@ data/
 .env*.local
 !.env.example
 .worktrees/
+.artifacts/
+.venv-dwg-validation/
