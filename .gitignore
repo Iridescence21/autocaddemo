@@ -11,3 +11,5 @@ data/
 .worktrees/
 .artifacts/
 .venv-dwg-validation/
+__pycache__/
+*.py[cod]
