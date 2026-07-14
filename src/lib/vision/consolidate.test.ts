@@ -13,6 +13,10 @@ const rendered: RenderedCadDrawing = {
   ],
 };
 
+function box(x: number, y: number, width: number, height: number): VisionDetection["location"] {
+  return { x, y, width, height };
+}
+
 function detection(overrides: Partial<VisionDetection>): VisionDetection {
   return {
     temporaryId: "detection-001",
@@ -67,5 +71,32 @@ describe("vision detection consolidation", () => {
     expect(components.filter((component) => component.category === "circuit_breaker")).toHaveLength(2);
     expect(components.find((component) => component.category === "unknown")?.reviewStatus).toBe("unknown");
     expect(components.find((component) => component.category === "unknown")?.manufacturer).toBeNull();
+  });
+
+  it("does not merge two close repeated symbols with separate boxes", () => {
+    const components = consolidateVisionComponents(result([
+      detection({ temporaryId: "QF-1", label: "QF", location: box(0.40, 0.3, 0.08, 0.1) }),
+      detection({ temporaryId: "QF-2", label: "QF", location: box(0.49, 0.3, 0.08, 0.1) }),
+    ]), rendered);
+
+    expect(components).toHaveLength(2);
+  });
+
+  it("merges the same high-overlap detection returned by verification", () => {
+    const components = consolidateVisionComponents(result([
+      detection({ temporaryId: "tile-1-enumerate-1", confidence: 0.75, evidence: ["enumerated"], location: box(0.4, 0.3, 0.1, 0.1) }),
+      detection({ temporaryId: "tile-1-verify-1", confidence: 0.9, evidence: ["verified"], location: box(0.402, 0.301, 0.1, 0.1) }),
+    ]), rendered);
+
+    expect(components).toHaveLength(1);
+    const [component] = components;
+    if (!component) throw new Error("expected one consolidated component");
+    if (!component.location) throw new Error("expected consolidated location");
+    expect(component.temporaryId).toBe("tile-1-verify-1");
+    expect(component.location.x).toBeCloseTo(0.2412);
+    expect(component.location.y).toBeCloseTo(0.188125);
+    expect(component.location.width).toBeCloseTo(0.06);
+    expect(component.location.height).toBeCloseTo(0.0625);
+    expect(component.evidence).toEqual(expect.arrayContaining(["enumerated", "verified"]));
   });
 });

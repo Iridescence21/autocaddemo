@@ -26,27 +26,20 @@ function intersectionOverUnion(left: VisionLocation, right: VisionLocation) {
   return union > 0 ? intersection / union : 0;
 }
 
-function centersAreNear(left: VisionLocation, right: VisionLocation) {
-  const leftCenter = { x: left.x + left.width / 2, y: left.y + left.height / 2 };
-  const rightCenter = { x: right.x + right.width / 2, y: right.y + right.height / 2 };
-  const distance = Math.hypot(leftCenter.x - rightCenter.x, leftCenter.y - rightCenter.y);
-  const reference = Math.max(Math.hypot(left.width, left.height), Math.hypot(right.width, right.height));
-  return reference > 0 && distance <= reference * 0.18;
+function normalizedLabel(label: string | null) {
+  const normalized = label?.trim().toLowerCase();
+  return normalized || null;
 }
 
 function compatible(left: LocatedDetection, right: LocatedDetection) {
-  const categoriesMatch = left.category === right.category || left.category === "unknown" || right.category === "unknown";
-  if (!categoriesMatch) return false;
-  if (left.label && right.label && left.label.trim().toLowerCase() !== right.label.trim().toLowerCase()) return false;
-  return intersectionOverUnion(left.overviewLocation, right.overviewLocation) > 0.45 || centersAreNear(left.overviewLocation, right.overviewLocation);
-}
-
-function unionLocation(left: VisionLocation, right: VisionLocation): VisionLocation {
-  const x = Math.min(left.x, right.x);
-  const y = Math.min(left.y, right.y);
-  const maxX = Math.max(left.x + left.width, right.x + right.width);
-  const maxY = Math.max(left.y + left.height, right.y + right.height);
-  return { x, y, width: clamp(maxX - x), height: clamp(maxY - y) };
+  const iou = intersectionOverUnion(left.overviewLocation, right.overviewLocation);
+  const leftLabel = normalizedLabel(left.label);
+  const rightLabel = normalizedLabel(right.label);
+  const labelsAgree = leftLabel !== null && leftLabel === rightLabel;
+  const categoriesAgree = left.category === right.category || left.category === "unknown" || right.category === "unknown";
+  if (!categoriesAgree) return false;
+  if (leftLabel && rightLabel && !labelsAgree) return false;
+  return iou >= 0.72 || (labelsAgree && iou >= 0.48);
 }
 
 function merge(left: LocatedDetection, right: LocatedDetection): LocatedDetection {
@@ -60,7 +53,7 @@ function merge(left: LocatedDetection, right: LocatedDetection): LocatedDetectio
     specifications: [...new Set([...left.specifications, ...right.specifications])],
     evidence: [...new Set([...left.evidence, ...right.evidence])],
     sourceTileIds: [...new Set([...left.sourceTileIds, ...right.sourceTileIds])].sort(),
-    overviewLocation: unionLocation(left.overviewLocation, right.overviewLocation),
+    overviewLocation: winner.overviewLocation,
     reviewRequired: true,
   };
 }
