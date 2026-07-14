@@ -11,6 +11,8 @@ export type DeviceOccurrence = {
   confidence: number;
   evidence: string[];
   reviewStatus: ReviewStatus;
+  occurrenceId?: string;
+  groupingKey?: string;
 };
 
 export type GroupedPhysicalDevice = PhysicalDeviceInput;
@@ -23,7 +25,7 @@ export function groupPhysicalDevices(occurrences: DeviceOccurrence[]): GroupedPh
   const groups = new Map<string, DeviceOccurrence[]>();
   for (const occurrence of occurrences) {
     const tag = normalizeTag(occurrence.tag);
-    const key = tag ? `tag:${tag}` : `occurrence:${occurrence.temporaryId}`;
+    const key = tag ? `tag:${tag}` : `occurrence:${occurrence.groupingKey ?? occurrence.temporaryId}`;
     groups.set(key, [...(groups.get(key) ?? []), occurrence]);
   }
   return [...groups.entries()].map(([key, items], index) => buildDevice(`device-${index + 1}`, key, items));
@@ -52,6 +54,9 @@ function buildDevice(temporaryId: string, key: string, occurrences: DeviceOccurr
     reviewStatus: requiresReview ? "requires_review" : representative.reviewStatus,
     quantity: 1,
     occurrenceTemporaryIds: occurrences.map((occurrence) => occurrence.temporaryId),
+    occurrenceIds: occurrences.every((occurrence) => occurrence.occurrenceId)
+      ? occurrences.map((occurrence) => occurrence.occurrenceId as string)
+      : undefined,
   };
 }
 

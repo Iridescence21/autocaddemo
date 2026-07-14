@@ -92,9 +92,8 @@ model ComponentCandidate {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   drawing           Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
-  physicalDevice    PhysicalDevice? @relation(fields: [physicalDeviceId], references: [id], onDelete: SetNull)
+  physicalDevice    PhysicalDevice? @relation(fields: [physicalDeviceId, drawingId], references: [id, drawingId], onDelete: Restrict)
 
-  @@unique([drawingId, temporaryId])
   @@index([drawingId, reviewStatus])
 }
 
@@ -118,6 +117,7 @@ model PhysicalDevice {
   occurrences    ComponentCandidate[]
 
   @@unique([drawingId, temporaryId])
+  @@unique([id, drawingId])
   @@index([drawingId, reviewStatus])
 }
 

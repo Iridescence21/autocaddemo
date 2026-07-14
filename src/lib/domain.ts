@@ -81,4 +81,5 @@ export type PhysicalDeviceInput = {
   reviewStatus: ReviewStatus;
   quantity: 1;
   occurrenceTemporaryIds: string[];
+  occurrenceIds?: string[];
 };

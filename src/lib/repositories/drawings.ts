@@ -2,7 +2,7 @@ import type { ComponentInput } from "@/lib/domain";
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client/index";
 import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
-import { replacePhysicalDevicesInTransaction } from "@/lib/repositories/components";
+import { assertUniqueComponentTemporaryIds, replacePhysicalDevicesInTransaction } from "@/lib/repositories/components";
 
 export async function createDrawingUpload(input: {
   conversationId: string;
@@ -17,6 +17,7 @@ export async function createDrawingUpload(input: {
   return prisma.$transaction(async (tx) => {
     const conversation = await tx.drawingConversation.findFirst({ where: { id: input.conversationId, ownerScope: input.ownerScope } });
     if (!conversation) throw new Error("CONVERSATION_NOT_FOUND");
+    if (input.initialComponents) assertUniqueComponentTemporaryIds(input.initialComponents);
     const drawing = await tx.drawing.create({
       data: {
         conversationId: input.conversationId,

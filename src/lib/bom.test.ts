@@ -26,4 +26,24 @@ describe("preliminary BOM aggregation", () => {
     expect(bom?.items).toHaveLength(1);
     expect(bom?.items[0]).toMatchObject({ quantity: 2, confidence: 0.6, reviewStatus: "requires_review" });
   });
+
+  it("does not merge distinct devices when field values contain BOM key delimiters", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "BOM delimiter test" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "delimiter.dwg",
+      safeFilename: "delimiter.dwg",
+      storageKey: "demo/delimiter.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [
+        { temporaryId: "KA1", category: "relay", tag: "KA1", description: "A|B", manufacturer: "C", specifications: ["X"], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" },
+        { temporaryId: "KA2", category: "relay", tag: "KA2", description: "A", manufacturer: "B", modelNumber: "C|", specifications: ["X"], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" },
+      ],
+    });
+
+    const bom = await generateBom(drawing.id, "demo-user");
+    expect(bom?.items).toHaveLength(2);
+  });
 });

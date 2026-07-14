@@ -14,6 +14,7 @@ import {
 import {
   generateBom,
   removeComponent,
+  replaceComponents,
   replacePhysicalDevices,
   updateComponent,
 } from "@/lib/repositories/components";
@@ -157,10 +158,183 @@ describe("drawing analysis persistence", () => {
         { temporaryId: "KA1", category: "relay", tag: "KA1", description: "Control relay", specifications: ["24VDC"], confidence: 0.8, evidence: ["tag"], method: "fixture", reviewStatus: "confirmed" },
       ],
     });
-    await prisma.physicalDevice.deleteMany({ where: { drawingId: drawing.id } });
+    await prisma.$transaction([
+      prisma.componentCandidate.updateMany({ where: { drawingId: drawing.id }, data: { physicalDeviceId: null } }),
+      prisma.physicalDevice.deleteMany({ where: { drawingId: drawing.id } }),
+    ]);
 
     const bom = await generateBom(drawing.id, "demo-user");
     expect(bom?.items).toMatchObject([{ quantity: 1, category: "relay" }]);
     expect((await getAnalysisSnapshot(drawing.id, "demo-user"))?.physicalDevices).toHaveLength(1);
+  });
+
+  it("regroups devices and regenerates the BOM after an occurrence tag edit or removal", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Editable starter" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "editable.dwg",
+      safeFilename: "editable.dwg",
+      storageKey: "demo/editable.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [
+        { temporaryId: "KA1-coil", category: "relay", tag: "KA1", description: "Relay", specifications: ["24VDC"], confidence: 0.8, evidence: ["coil"], method: "fixture", reviewStatus: "confirmed" },
+        { temporaryId: "KA1-contact", category: "switch", tag: "KA1", description: "Relay contact", specifications: ["NO"], confidence: 0.9, evidence: ["contact"], method: "fixture", reviewStatus: "confirmed" },
+      ],
+    });
+    await generateBom(drawing.id, "demo-user");
+    const initial = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(initial?.physicalDevices).toHaveLength(1);
+
+    const contact = initial?.components.find((component) => component.temporaryId === "KA1-contact");
+    if (!contact) throw new Error("contact missing");
+    await updateComponent(drawing.id, contact.id, "demo-user", { tag: "KA2" });
+    const afterEdit = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(afterEdit?.physicalDevices).toHaveLength(2);
+    expect(afterEdit?.bomItems.reduce((total, item) => total + item.quantity, 0)).toBe(2);
+
+    await removeComponent(drawing.id, contact.id, "demo-user");
+    const afterRemoval = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(afterRemoval?.physicalDevices).toHaveLength(1);
+    expect(afterRemoval?.bomItems.reduce((total, item) => total + item.quantity, 0)).toBe(1);
+  });
+
+  it("rejects a cross-drawing physical-device link at the database boundary", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Cross drawing links" });
+    const drawingA = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "a.dwg",
+      safeFilename: "a.dwg",
+      storageKey: "demo/a.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+    const conversationB = await createConversation({ ownerScope: "demo-user", title: "Second drawing" });
+    const drawingB = await createDrawingUpload({
+      conversationId: conversationB.id,
+      ownerScope: "demo-user",
+      originalFilename: "b.dwg",
+      safeFilename: "b.dwg",
+      storageKey: "demo/b.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA2", category: "relay", tag: "KA2", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+    const first = await getAnalysisSnapshot(drawingA.id, "demo-user");
+    const second = await getAnalysisSnapshot(drawingB.id, "demo-user");
+    if (!first?.components[0] || !second?.physicalDevices[0]) throw new Error("fixture missing");
+
+    await expect(prisma.componentCandidate.update({
+      where: { id: first.components[0].id },
+      data: { physicalDeviceId: second.physicalDevices[0].id },
+    })).rejects.toThrow();
+  });
+
+  it("rejects duplicate new occurrence IDs before replacing existing rows", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Duplicate input" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "duplicate-input.dwg",
+      safeFilename: "duplicate-input.dwg",
+      storageKey: "demo/duplicate-input.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+
+    await expect(replaceComponents(drawing.id, "demo-user", [
+      { temporaryId: "duplicate", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" },
+      { temporaryId: "duplicate", category: "relay", tag: "KA2", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" },
+    ])).rejects.toThrow("DUPLICATE_COMPONENT_TEMPORARY_ID");
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.components.map((component) => component.temporaryId)).toEqual(["KA1"]);
+    expect(snapshot?.physicalDevices).toHaveLength(1);
+  });
+
+  it("backfills legacy duplicate occurrence IDs without deleting either row", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Legacy duplicates" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "legacy-duplicates.dwg",
+      safeFilename: "legacy-duplicates.dwg",
+      storageKey: "demo/legacy-duplicates.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+    });
+    await prisma.componentCandidate.createMany({ data: [
+      { drawingId: drawing.id, temporaryId: "legacy-duplicate", category: "relay", tag: null, description: "Relay A", specifications: [], manufacturer: null, modelNumber: null, confidence: 0.8, evidence: [], method: "legacy", sourceTileId: null, location: { x: 0, y: 0, width: 0, height: 0 }, reviewStatus: "confirmed" },
+      { drawingId: drawing.id, temporaryId: "legacy-duplicate", category: "relay", tag: null, description: "Relay B", specifications: [], manufacturer: null, modelNumber: null, confidence: 0.8, evidence: [], method: "legacy", sourceTileId: null, location: { x: 1, y: 1, width: 0, height: 0 }, reviewStatus: "confirmed" },
+    ] });
+
+    const bom = await generateBom(drawing.id, "demo-user");
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.components).toHaveLength(2);
+    expect(snapshot?.physicalDevices).toHaveLength(2);
+    expect(bom?.items.reduce((total, item) => total + item.quantity, 0)).toBe(2);
+  });
+
+  it("leaves device links unchanged when a replacement has the wrong owner", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Wrong owner" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "wrong-owner.dwg",
+      safeFilename: "wrong-owner.dwg",
+      storageKey: "demo/wrong-owner.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+
+    await expect(replacePhysicalDevices(drawing.id, "other-user", [])).resolves.toEqual([]);
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.physicalDevices).toHaveLength(1);
+    expect(snapshot?.components[0]?.physicalDeviceId).toBe(snapshot?.physicalDevices[0]?.id);
+  });
+
+  it("rolls back a replacement when an occurrence is missing", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Missing occurrence" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "missing-occurrence.dwg",
+      safeFilename: "missing-occurrence.dwg",
+      storageKey: "demo/missing-occurrence.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+    const missing = groupPhysicalDevices([{ temporaryId: "missing", category: "relay", tag: "KA2", description: "Relay", specifications: [], manufacturer: null, modelNumber: null, confidence: 0.8, evidence: [], reviewStatus: "confirmed" }]);
+
+    await expect(replacePhysicalDevices(drawing.id, "demo-user", missing)).rejects.toThrow("DEVICE_OCCURRENCE_NOT_FOUND");
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.physicalDevices).toHaveLength(1);
+    expect(snapshot?.components[0]?.physicalDeviceId).toBe(snapshot?.physicalDevices[0]?.id);
+  });
+
+  it("rolls back a replacement when an occurrence is assigned twice", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "Duplicate assignment" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "duplicate-assignment.dwg",
+      safeFilename: "duplicate-assignment.dwg",
+      storageKey: "demo/duplicate-assignment.dwg",
+      sourceType: "dwg",
+      byteSize: 1,
+      initialComponents: [{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], confidence: 0.8, evidence: [], method: "fixture", reviewStatus: "confirmed" }],
+    });
+    const [device] = groupPhysicalDevices([{ temporaryId: "KA1", category: "relay", tag: "KA1", description: "Relay", specifications: [], manufacturer: null, modelNumber: null, confidence: 0.8, evidence: [], reviewStatus: "confirmed" }]);
+    if (!device) throw new Error("device missing");
+
+    await expect(replacePhysicalDevices(drawing.id, "demo-user", [device, { ...device, temporaryId: "device-duplicate" }])).rejects.toThrow("DUPLICATE_DEVICE_OCCURRENCE");
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.physicalDevices).toHaveLength(1);
+    expect(snapshot?.components[0]?.physicalDeviceId).toBe(snapshot?.physicalDevices[0]?.id);
   });
 });
