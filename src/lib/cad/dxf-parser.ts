@@ -173,6 +173,14 @@ export function parseDxfText(source: string): NormalizedDxfDrawing {
   };
 }
 
+export function decodeDxfBuffer(source: Buffer) {
+  const headerProbe = source.subarray(0, Math.min(source.length, 16384)).toString("latin1").toUpperCase();
+  if (/ANSI_(?:936|950)|\bGBK\b|\bGB2312\b/.test(headerProbe)) {
+    return new TextDecoder("gbk").decode(source);
+  }
+  return new TextDecoder("utf-8").decode(source);
+}
+
 export async function parseDxfFile(sourcePath: string) {
-  return parseDxfText(await readFile(sourcePath, "utf8"));
+  return parseDxfText(decodeDxfBuffer(await readFile(sourcePath)));
 }
