@@ -134,6 +134,84 @@
   font-size: 12px;
 }
 
+.inspectorPanel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.inspectorHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 16px 10px;
+}
+
+.inspectorHeader strong {
+  font-size: 16px;
+}
+
+.inspectorHeader span {
+  overflow: hidden;
+  color: #8c8c8c;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspectorTabs {
+  min-height: 0;
+  flex: 1;
+  padding: 0 12px 12px;
+}
+
+.inspectorTabs :global(.ant-tabs-content-holder),
+.inspectorTabs :global(.ant-tabs-content),
+.inspectorTabs :global(.ant-tabs-tabpane) {
+  height: 100%;
+  min-height: 0;
+}
+
+.inspectorTabs :global(.ant-tabs-tabpane) {
+  overflow: auto;
+}
+
+.inspectorTabs :global(.ant-tabs-nav-list) {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.fileBrowser {
+  height: 100%;
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--workspace-border);
+  border-radius: 12px;
+}
+
+.inspectorFileCard {
+  width: 100%;
+}
+
+.inspectorStack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 2px 18px;
+}
+
+.detailCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 12px;
+  background: #fafafa;
+}
+
 @media (max-width: 1180px) {
   .workspace,
   .workspaceNoInspector {
