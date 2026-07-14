@@ -106,7 +106,7 @@ function messageToBubble(item: MessageRecord, progressComplete = false): BubbleI
   if (item.type === "bom_results") {
     content = <XMarkdown content={`### 初步 BOM 已生成\n\n共 **${String(data.itemCount ?? 0)}** 个采购分组，合计数量 **${String(data.totalQuantity ?? 0)}**。\n\n图纸中未显示的制造商和型号不会被猜测。`} />;
   }
-  if (item.type === "export") content = <XMarkdown content={`### 导出完成\n\n文件 **${String(data.filename ?? "初步-BOM.csv")}** 已生成。`} />;
+  if (item.type === "export") content = <XMarkdown content={`### 导出完成\n\n文件 **${String(data.filename ?? "元件分析清单.xlsx")}** 已生成。`} />;
   if (item.type === "error") content = <XMarkdown content={`### 分析失败\n\n${String(data.message ?? "处理未完成，请重试。")}\n\n可修正配置或文件后重新分析。`} />;
   if (item.type === "review_request") content = <XMarkdown content={`### 需要工程师复核\n\n${Array.isArray(data.componentIds) ? data.componentIds.length : 0} 个元件等待确认。`} />;
   return { key: item.id, role: item.role === "user" ? "user" : "ai", content, status: item.type === "error" ? "error" : "success" };
@@ -290,14 +290,14 @@ export default function DrawingWorkspace() {
   async function downloadBom(drawingId: string) {
     const response = await fetch(`/api/drawings/${drawingId}/exports`, { method: "POST" });
     if (!response.ok) {
-      await appendText("初步 BOM 导出失败，请稍后重试。", "assistant");
+      await appendText("Excel 元件清单导出失败，请稍后重试。", "assistant");
       return;
     }
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "初步-BOM.csv";
+    anchor.download = "元件分析清单.xlsx";
     anchor.click();
     URL.revokeObjectURL(url);
     await refresh();
@@ -409,8 +409,8 @@ export default function DrawingWorkspace() {
     accept=".dwg,.dxf"
     maxCount={1}
     items={attachments}
+    overflow="scrollX"
     onRemove={() => { setSelectedFile(null); setAttachments([]); setAttachmentError(""); }}
-    placeholder={{ icon: <PaperClipOutlined />, title: "上传 DWG 或 DXF 图纸", description: "每个分析会话最多一份图纸，最大 25 MB" }}
   />;
 
   return <main style={{ width: "100%", minWidth: 1000, height: "100dvh", display: "flex", overflow: "hidden", background: "#ffffff" }}>
@@ -470,11 +470,20 @@ export default function DrawingWorkspace() {
 
       <div style={{ width: "100%", maxWidth: 700, margin: "0 auto" }}>
         {activeDrawing && <Prompts wrap items={followupPrompts} onItemClick={({ data }) => { setFilterCategory(null); setResultView(data.key as ResultView); }} />}
-        <Sender.Header open={attachments.length > 0 || Boolean(attachmentError)} onOpenChange={() => undefined}>
-          {attachmentList}
-          {attachmentError && <Bubble content={`错误：${attachmentError}`} variant="borderless" />}
-        </Sender.Header>
         <Sender
+          header={<Sender.Header
+            open={attachments.length > 0}
+            onOpenChange={(open) => {
+              if (!open) {
+                setSelectedFile(null);
+                setAttachments([]);
+                setAttachmentError("");
+              }
+            }}
+          >
+            {attachmentList}
+            {attachmentError && <Bubble content={`错误：${attachmentError}`} variant="borderless" />}
+          </Sender.Header>}
           loading={loading}
           autoSize={{ minRows: 1, maxRows: 6 }}
           onSubmit={(text) => void submit(text)}
@@ -519,7 +528,7 @@ function WorkspaceResult({ view, drawing, components, reviewComponents, selected
 
   if (view === "bom") return <Bubble placement="start" content={<>
     <XMarkdown content={bomMarkdown(drawing.bomItems)} />
-    <Actions items={[{ key: "export", label: "导出 CSV", icon: <ExportOutlined /> }, { key: "refresh", label: "重新生成", icon: <ReloadOutlined /> }]} onClick={({ key }) => { if (key === "export") onExport(); }} />
+    <Actions items={[{ key: "export", label: "导出 Excel", icon: <ExportOutlined /> }, { key: "refresh", label: "重新生成", icon: <ReloadOutlined /> }]} onClick={({ key }) => { if (key === "export") onExport(); }} />
   </>} />;
 
   if (view === "review") return <Bubble placement="start" content={<>

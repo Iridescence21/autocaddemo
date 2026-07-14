@@ -24,4 +24,20 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(source).toContain("元件清单");
     expect(source).not.toContain("Electrical Drawing AI");
   });
+
+  it("keeps the attachment panel inside the Sender header slot", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+
+    expect(source).toMatch(/header=\{<Sender\.Header\s+open=\{attachments\.length > 0\}/);
+    expect(source).not.toContain("open={attachments.length > 0 || Boolean(attachmentError)}");
+    expect(source).not.toContain("placeholder={{ icon: <PaperClipOutlined />");
+  });
+
+  it("offers the complete component analysis as an Excel download", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+
+    expect(source).toContain("导出 Excel");
+    expect(source).toContain("元件分析清单.xlsx");
+    expect(source).not.toContain("初步-BOM.csv");
+  });
 });
