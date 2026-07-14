@@ -1,0 +1,51 @@
+{
+  "drawingSummary": "可能为电气控制柜原理图",
+  "components": [
+    {
+      "temporaryId": "detection-001",
+      "category": "circuit_breaker",
+      "tag": "QF1",
+      "description": "可能为断路器",
+      "manufacturer": null,
+      "modelNumber": null,
+      "specifications": ["400VAC"],
+      "confidence": 0.94,
+      "tileId": "tile-1",
+      "location": { "x": 0.18, "y": 0.22, "width": 0.08, "height": 0.12 },
+      "evidence": ["附近标签 QF1", "块结构与断路器符号相似"],
+      "method": "demo_fixture_block_mapping",
+      "reviewStatus": "confirmed"
+    },
+    {
+      "temporaryId": "detection-002",
+      "category": "contactor",
+      "tag": "KM1",
+      "description": "可能为接触器",
+      "manufacturer": null,
+      "modelNumber": null,
+      "specifications": ["24VDC"],
+      "confidence": 0.78,
+      "tileId": "tile-2",
+      "location": { "x": 0.45, "y": 0.34, "width": 0.1, "height": 0.1 },
+      "evidence": ["附近标签 KM1", "线圈与触点图形模式"],
+      "method": "demo_fixture_geometry_and_text",
+      "reviewStatus": "requires_review"
+    },
+    {
+      "temporaryId": "detection-003",
+      "category": "unknown",
+      "tag": null,
+      "description": "未知电气符号",
+      "manufacturer": null,
+      "modelNumber": null,
+      "specifications": [],
+      "confidence": 0.32,
+      "tileId": "tile-3",
+      "location": { "x": 0.72, "y": 0.64, "width": 0.05, "height": 0.05 },
+      "evidence": ["基础几何图形没有高置信度类别匹配"],
+      "method": "demo_fixture_unknown",
+      "reviewStatus": "unknown"
+    }
+  ],
+  "warnings": ["初步 AI 分析结果，需要电气工程师复核。"]
+}
