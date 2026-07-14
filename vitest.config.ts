@@ -1,7 +1,10 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
-process.env.DATABASE_URL = "file:./data/dwg-electrical-test.db";
+const defaultTestDatabase = process.platform === "darwin"
+  ? "/tmp/dwg-electrical-test.db"
+  : path.resolve(__dirname, "data/dwg-electrical-test.db");
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? `file:${defaultTestDatabase}`;
 
 export default defineConfig({
   resolve: {
