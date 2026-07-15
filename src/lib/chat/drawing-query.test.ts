@@ -68,6 +68,15 @@ describe("drawing evidence questions", () => {
     expect(answer.text).toContain("不包含保护整定、回路连通性或结构干涉校核");
   });
 
+  it("summarizes what the current drawing contains from its native BOM", () => {
+    const answer = answerDrawingQuestion({ question: "这个图纸里面有什么？", currentDrawingId: "drawing-02", drawings });
+
+    expect(answer.intent).toBe("overview");
+    expect(answer.text).toContain("M-T1-02.dwg");
+    expect(answer.text).toContain("电流继电器 7 只");
+    expect(answer.text).toContain("原生 BOM 共 3 行");
+  });
+
   it("returns an actionable response when no analyzed device matches", () => {
     const answer = answerDrawingQuestion({ question: "真空接触器有多少只？", currentDrawingId: "drawing-02", drawings });
 

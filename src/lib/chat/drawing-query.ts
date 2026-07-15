@@ -1,6 +1,6 @@
 import type { NativeBomRow, StructuralSnapshot } from "@/lib/cad/native-bom";
 
-export type DrawingQuestionIntent = "model_count" | "quantity" | "distribution" | "location" | "bom" | "review" | "unknown";
+export type DrawingQuestionIntent = "overview" | "model_count" | "quantity" | "distribution" | "location" | "bom" | "review" | "unknown";
 
 export type StructuralDrawingRecord = {
   id: string;
@@ -51,6 +51,7 @@ function detectedIntent(question: string): DrawingQuestionIntent {
   const normalized = normalize(question);
   if (/审查|检查|校核|问题/.test(normalized)) return "review";
   if (/生成.*bom|bom.*清单|物料清单/.test(normalized)) return "bom";
+  if (/有什么|有哪些|包含哪些|识别到什么|识别出了什么/.test(normalized)) return "overview";
   if (/哪张|哪个图纸|那个图纸|最多|分布/.test(normalized)) return /最多|哪张|分布/.test(normalized) ? "distribution" : "location";
   if (/在哪.*图纸|哪些图纸|什么图纸/.test(normalized)) return "location";
   if (/几种|多少种|类型|型号/.test(normalized)) return "model_count";
@@ -94,10 +95,27 @@ function answerBom(input: DrawingQuestionInput): DrawingQuestionAnswer {
   };
 }
 
+function answerOverview(input: DrawingQuestionInput): DrawingQuestionAnswer {
+  const drawing = currentDrawing(input);
+  if (!drawing) return { intent: "overview", entityName: null, text: "当前图纸尚未完成 CAD 结构分析，请先运行图纸分析。", evidence: [], drawingIds: [] };
+  const rows = drawing.structuralSnapshot.bomRows;
+  const quantities = new Map<string, number>();
+  for (const row of rows) quantities.set(row.name, (quantities.get(row.name) ?? 0) + quantity(row));
+  const groups = [...quantities.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  return {
+    intent: "overview",
+    entityName: null,
+    text: `${drawing.originalFilename} 的 CAD 原生 BOM 共 ${rows.length} 行，识别到：${groups.map(([name, count]) => `${name} ${count} 只`).join("、")}。型号、代号和逐行证据可在 BOM 面板查看。`,
+    evidence: evidenceFor(drawing, rows),
+    drawingIds: [drawing.id],
+  };
+}
+
 export function answerDrawingQuestion(input: DrawingQuestionInput): DrawingQuestionAnswer {
   const intent = detectedIntent(input.question);
   if (intent === "review") return answerReview(input);
   if (intent === "bom") return answerBom(input);
+  if (intent === "overview") return answerOverview(input);
   const entityName = entityNameFrom(input.question, input.drawings);
   if (!entityName) {
     return {

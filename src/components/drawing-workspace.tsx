@@ -234,8 +234,10 @@ export default function DrawingWorkspace() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ question: finalText }),
           });
-          const data = (await response.json()) as { message?: string };
+          const data = (await response.json()) as { message?: string; answer?: { intent?: string } };
           if (!response.ok) throw new Error(data.message ?? "图纸问询未完成，请重试。");
+          if (data.answer?.intent === "bom" || data.answer?.intent === "overview") setInspectorView("bom");
+          if (data.answer?.intent === "review") setInspectorView("review");
         }
       }
       await refresh(conversationId);

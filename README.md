@@ -8,10 +8,12 @@ A standalone Next.js demonstration that analyzes AutoCAD electrical drawings thr
 - Secure one-file DWG/DXF uploads with extension, size, and file-signature validation
 - Prepared DWG demonstration fixture
 - Native ASCII DXF parsing without AutoCAD
+- Local DWG-to-DXF conversion, GBK/ANSI_936 Chinese decoding, and native CAD BOM extraction
 - DXF SVG/PNG rendering and four overlapping analysis tiles
 - Server-side OpenAI Responses API vision adapter with strict JSON Schema and Zod validation
 - Duplicate consolidation across image tiles
-- Chinese categorized component lists, review queue, editing, removal, confirmation, preliminary BOM, and CSV export
+- Chinese categorized component lists, review queue, editing, removal, confirmation, native BOM, and Excel export
+- Deterministic natural-language questions for device model counts, quantities, cross-drawing distribution, BOM, and basic consistency review
 - Explicit confidence, method, source tile, evidence, and review state for every detected component
 
 Every result is preliminary and requires verification by an electrical engineer.
@@ -50,15 +52,15 @@ npm run typecheck
 npm run lint
 npm run build
 npm run smoke:dxf
+npm run smoke:drawing-qa -- /path/to/M-T1-01.dwg /path/to/M-T1-02.dwg
 ```
 
-`npm run smoke:dxf` makes a live, quota-consuming OpenAI request only when `OPENAI_API_KEY` is configured. Without a key it exits before any network request.
+`npm run smoke:dxf` makes a live, quota-consuming OpenAI request only when `OPENAI_API_KEY` is configured. `smoke:drawing-qa` uses an isolated temporary database and validates the native CAD path without an OpenAI key.
 
 ## Current limitations
 
-- Real analysis currently supports ASCII DXF; binary DXF is not supported.
-- Real DWG conversion is not included. Only the prepared DWG fixture follows the demo adapter.
+- Real analysis supports ASCII DXF and DWG files accepted by the installed `dwg2dxf` converter; binary DXF is not supported.
 - Detection is image-based and preliminary; it does not reconstruct full native wire topology or terminal graphs.
 - Bounding boxes are approximate and derived from tiled rendering coordinates.
-- Common deterministic Chinese/English chat commands are supported; unrestricted conversational question answering is not yet connected.
+- Deterministic drawing questions use native CAD BOM evidence; unrestricted questions outside the extracted device names remain intentionally unsupported.
 - No manufacturer or model value is inferred when it is not visibly present.
