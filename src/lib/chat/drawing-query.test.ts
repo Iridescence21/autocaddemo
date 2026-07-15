@@ -46,9 +46,12 @@ describe("drawing evidence questions", () => {
     const answer = answerDrawingQuestion({ question: "哪张图纸分布的电流继电器多？", currentDrawingId: "drawing-01", drawings });
 
     expect(answer.intent).toBe("distribution");
+    expect(answer.text).toContain("两张图纸里都找到电流继电器，但 M-T1-02.dwg 更多：");
+    expect(answer.text).toContain("| 图纸 | 电流继电器 | 数量 |");
+    expect(answer.text).toContain("| M-T1-01.dwg | KC1-KC4 | 4只 |");
+    expect(answer.text).toContain("| M-T1-02.dwg | KC1-KC7 | 7只 |");
+    expect(answer.text).toContain("- 分布最多的是 M-T1-02.dwg，比 M-T1-01.dwg 多 3 只。");
     expect(answer.text).toContain("M-T1-02.dwg 最多，共 7 只");
-    expect(answer.text).toContain("M-T1-01.dwg：4 只");
-    expect(answer.text).toContain("M-T1-02.dwg：7 只");
   });
 
   it("lists every drawing containing the requested device", () => {
@@ -56,8 +59,10 @@ describe("drawing evidence questions", () => {
 
     expect(answer.intent).toBe("location");
     expect(answer.text).toContain("2 张已分析图纸");
+    expect(answer.text).toContain("| 图纸 | 电流继电器 | 数量 |");
     expect(answer.text).toContain("M-T1-01.dwg");
     expect(answer.text).toContain("M-T1-02.dwg");
+    expect(answer.text).toContain("- 电流继电器在 2 张图中都有。");
   });
 
   it("reports structural review findings and states the audit boundary", () => {
@@ -75,6 +80,17 @@ describe("drawing evidence questions", () => {
     expect(answer.text).toContain("M-T1-02.dwg");
     expect(answer.text).toContain("电流继电器 7 只");
     expect(answer.text).toContain("原生 BOM 共 3 行");
+  });
+
+  it("formats basic drawing information as stable sections and a tag table", () => {
+    const answer = answerDrawingQuestion({ question: "跟我讲一下这个图纸的基本信息", currentDrawingId: "drawing-02", drawings });
+
+    expect(answer.intent).toBe("overview");
+    expect(answer.text).toContain("这张 M-T1-02 基本信息：");
+    expect(answer.text).toContain("- 已解析：1 个有效 CAD 实体、1 条原生文字、0 个块、1 个图层");
+    expect(answer.text).toContain("| 类型 | 原生标签 | 初步数量 |");
+    expect(answer.text).toContain("| 电流继电器 | KC1-KC7 | 7 |");
+    expect(answer.text).toContain("已经提取出的标签集合包括：");
   });
 
   it("returns an actionable response when no analyzed device matches", () => {
