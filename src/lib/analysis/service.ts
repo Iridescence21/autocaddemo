@@ -185,7 +185,7 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
   try {
     analysis = await analyzer.analyze({ drawingId, sourcePath, rendered });
   } catch (error) {
-    if (!structuralSnapshot || (!structuralSnapshot.bomRows.length && !structuralSnapshot.tags.length)) throw error;
+    if (!structuralSnapshot?.bomRows.length) throw error;
     const structuralBom = structuralSnapshot.bomRows.length
       ? await replaceBomFromNativeRows(drawingId, ownerScope, structuralSnapshot.bomRows)
       : { items: [] };
