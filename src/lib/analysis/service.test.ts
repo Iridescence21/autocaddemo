@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -170,6 +170,13 @@ describe("demo analysis service", () => {
     expect(result.bomItems.length).toBeGreaterThan(0);
     const messages = await listMessages(conversation.id, "demo-user");
     expect(messages.some((message) => message.type === "analysis_progress")).toBe(true);
+    const progressMessages = messages.filter((message) => message.type === "analysis_progress");
+    expect(progressMessages.at(-1)?.payload).toMatchObject({
+      jobId: drawing.analysisJob?.id,
+      status: "requires_review",
+      stage: "分析完成",
+      progress: 100,
+    });
     expect(messages.some((message) => message.type === "component_results")).toBe(true);
   });
 
@@ -248,6 +255,13 @@ describe("demo analysis service", () => {
     const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
     expect(snapshot?.job?.status).toBe("failed");
     expect(snapshot?.job?.progress).toBe(68);
+    const messages = await listMessages(conversation.id, "demo-user");
+    expect(messages.filter((message) => message.type === "analysis_progress").at(-1)?.payload).toMatchObject({
+      jobId: drawing.analysisJob?.id,
+      status: "failed",
+      stage: "分析失败",
+      progress: 68,
+    });
   });
 
   it("persists native CAD evidence and BOM before visual analysis runs", async () => {
@@ -285,5 +299,65 @@ describe("demo analysis service", () => {
     expect(snapshot?.drawing.structuralSnapshot).toMatchObject({ schemaVersion: 1, counts: { bomRows: 1 } });
     expect(snapshot?.bomItems).toMatchObject([{ description: "电流继电器", modelNumber: "LL-61E/5", quantity: 3 }]);
     expect(snapshot?.job).toMatchObject({ status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
+    const messages = await listMessages(conversation.id, "demo-user");
+    expect(messages.filter((message) => message.type === "analysis_progress").at(-1)?.payload).toMatchObject({
+      jobId: drawing.analysisJob?.id,
+      status: "requires_review",
+      stage: "CAD 结构分析完成（视觉识别受限）",
+      progress: 100,
+    });
+  });
+
+  it("finishes ordinary DWGs from native BOM evidence without waiting for vision", async () => {
+    const conversation = await createConversation({ ownerScope: "demo-user", title: "DWG native BOM demo" });
+    const drawing = await createDrawingUpload({
+      conversationId: conversation.id,
+      ownerScope: "demo-user",
+      originalFilename: "native-dwg.dwg",
+      safeFilename: "native-dwg.dwg",
+      storageKey: "fixtures/cad/native-dwg.dwg",
+      sourceType: "dwg",
+      byteSize: 100,
+    });
+    const context = {
+      entities: [], blockDefinitions: {}, layers: ["0"], blockNames: [], warnings: [],
+      extents: { minX: 0, minY: 0, maxX: 100, maxY: 120 },
+      texts: [
+        { value: "序号", layer: "0", handle: "h1", position: { x: 2, y: 100 } }, { value: "符号", layer: "0", handle: "h2", position: { x: 12, y: 100 } },
+        { value: "名称", layer: "0", handle: "h3", position: { x: 32, y: 100 } }, { value: "型号规格", layer: "0", handle: "h4", position: { x: 62, y: 100 } },
+        { value: "数量", layer: "0", handle: "h5", position: { x: 88, y: 100 } }, { value: "备注", layer: "0", handle: "h6", position: { x: 96, y: 100 } },
+        { value: "1", layer: "0", handle: "r1", position: { x: 2, y: 90 } }, { value: "QF1", layer: "0", handle: "r2", position: { x: 12, y: 90 } },
+        { value: "断路器", layer: "0", handle: "r3", position: { x: 32, y: 90 } }, { value: "NM1-125S/3300", layer: "0", handle: "r4", position: { x: 62, y: 90 } },
+        { value: "1", layer: "0", handle: "r5", position: { x: 88, y: 90 } },
+      ],
+    };
+    const renderer: CadRenderAdapter = { async render() { return { overviewImageUrl: "data:image/png;base64,test", width: 100, height: 120, tiles: [], metadata: { context } }; } };
+    let analyzerCalls = 0;
+    const analyzer: DrawingVisionAnalyzer = { async analyze() { analyzerCalls += 1; throw new Error("ANALYZER_SHOULD_NOT_RUN"); } };
+
+    const result = await runDrawingAnalysis(drawing.id, "demo-user", { renderer, analyzer, analysisMode: "vision", sourcePathResolver: () => "unused", delayMs: 0 });
+
+    expect(analyzerCalls).toBe(0);
+    expect(result).toMatchObject({
+      status: "requires_review",
+      structuralOnly: true,
+      bomItems: [{ description: "断路器", modelNumber: "NM1-125S/3300", quantity: 1 }],
+    });
+    const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
+    expect(snapshot?.job).toMatchObject({ status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
+  });
+
+  it("persists every terminal progress message before exposing its terminal job status", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/lib/analysis/service.ts"), "utf8");
+    const failureBlock = source.slice(source.indexOf("export async function persistAnalysisFailure"), source.indexOf("export async function runDrawingAnalysis"));
+    const structuralBlock = source.slice(source.indexOf("async function completeStructuralOnlyAnalysis"), source.indexOf("export async function runDrawingAnalysis"));
+    const normalBlock = source.slice(source.indexOf("const finalStatus"), source.indexOf("return { status: finalStatus"));
+
+    expect(failureBlock.indexOf("await appendProgressMessage")).toBeLessThan(failureBlock.indexOf('await appendMessage(current.drawing.conversationId, {'));
+    const failedUpdateIndex = failureBlock.indexOf("await updateAnalysisStatus(drawingId, ownerScope");
+    const structuralUpdateIndex = structuralBlock.indexOf("await updateAnalysisStatus(input.drawingId, input.ownerScope");
+    expect(failureBlock.indexOf('await appendMessage(current.drawing.conversationId, {')).toBeLessThan(failedUpdateIndex);
+    expect(structuralBlock.indexOf("await appendProgressMessage")).toBeLessThan(structuralUpdateIndex);
+    expect(normalBlock.indexOf("await appendProgressMessage")).toBeLessThan(normalBlock.indexOf("await updateAnalysisStatus(drawingId, ownerScope"));
   });
 });

@@ -20,6 +20,7 @@ import { COMPONENT_CATEGORY_LABELS } from "@/lib/presentation/component-list";
 import ConversationSidebar from "./conversation-sidebar";
 import DrawingMessageList from "./drawing-message-list";
 import WorkspaceShell from "./workspace-shell";
+import { createLatestRequestGuard, refreshMessagesAfterTerminal } from "./workspace-model";
 import type { AttachmentItem, Conversation, MessageRecord } from "./workspace-types";
 import styles from "./drawing-workspace.module.css";
 
@@ -45,6 +46,7 @@ export default function DrawingWorkspace() {
   const [senderMounted, setSenderMounted] = useState(false);
   const xConversations = useXConversations({ defaultConversations: [] });
   const xConversationsRef = useRef(xConversations);
+  const loadRequestGuard = useRef(createLatestRequestGuard());
 
   const loadConversations = useCallback(async () => {
     const response = await fetch("/api/drawing-conversations", { cache: "no-store" });
@@ -57,12 +59,21 @@ export default function DrawingWorkspace() {
 
   const loadActive = useCallback(async (id: string) => {
     if (!id) return;
+    const requestToken = loadRequestGuard.current.next();
     const [conversationResponse, messagesResponse] = await Promise.all([
       fetch(`/api/drawing-conversations/${id}`, { cache: "no-store" }),
       fetch(`/api/conversations/${id}/messages`, { cache: "no-store" }),
     ]);
-    if (conversationResponse.ok) setSnapshot(((await conversationResponse.json()) as { conversation: Conversation }).conversation);
-    if (messagesResponse.ok) setMessages(((await messagesResponse.json()) as { messages: MessageRecord[] }).messages);
+    const nextSnapshot = conversationResponse.ok ? ((await conversationResponse.json()) as { conversation: Conversation }).conversation : null;
+    if (!loadRequestGuard.current.isCurrent(requestToken)) return;
+    if (nextSnapshot) setSnapshot(nextSnapshot);
+    if (messagesResponse.ok) {
+      const initialMessages = ((await messagesResponse.json()) as { messages: MessageRecord[] }).messages;
+      const status = nextSnapshot?.drawing?.analysisJob?.status;
+      const nextMessages = status ? await refreshMessagesAfterTerminal(id, status, initialMessages) : initialMessages;
+      if (!loadRequestGuard.current.isCurrent(requestToken)) return;
+      setMessages(nextMessages);
+    }
   }, []);
 
   useEffect(() => { queueMicrotask(() => void loadConversations()); }, [loadConversations]);

@@ -1,6 +1,32 @@
 import type { Drawing, MessageRecord, SessionFileGroup } from "./workspace-types";
 import { projectWorkspaceResultState } from "@/lib/presentation/component-list";
 
+const terminalAnalysisStatuses = new Set(["completed", "requires_review", "failed"]);
+
+export function createLatestRequestGuard() {
+  let latestRequest = 0;
+  return {
+    next() {
+      latestRequest += 1;
+      return latestRequest;
+    },
+    isCurrent(request: number) {
+      return request === latestRequest;
+    },
+  };
+}
+
+export async function refreshMessagesAfterTerminal(conversationId: string, status: string, currentMessages: MessageRecord[]) {
+  if (!terminalAnalysisStatuses.has(status)) return currentMessages;
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}/messages`, { cache: "no-store" });
+    if (!response.ok) return currentMessages;
+    return ((await response.json()) as { messages: MessageRecord[] }).messages;
+  } catch {
+    return currentMessages;
+  }
+}
+
 export function messagePayload(message: MessageRecord) {
   return (message.payload ?? {}) as Record<string, unknown>;
 }
@@ -86,6 +112,11 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function publicStage(stage: string, data: Record<string, unknown>) {
+  if (data.structuralOnly === true || stage.includes("视觉识别受限")) return "CAD 结构分析完成";
+  return stage;
+}
+
 export function buildMessageView(message: MessageRecord): MessageView {
   const data = messagePayload(message);
   const resultState = projectWorkspaceResultState(data);
@@ -107,7 +138,9 @@ export function buildMessageView(message: MessageRecord): MessageView {
   if (isError) text = String(data.message ?? "处理未完成，请重试。");
 
   const warnings = stringArray(data.warnings);
-  const warning = resultState.coverageLimited || data.coverageLimited === true ? "扫描区域受限，结果可能不完整" : warnings[0];
+  const warning = data.structuralOnly === true
+    ? "结果来自 CAD 原生文字和 BOM 表格，需工程师复核。"
+    : resultState.coverageLimited || data.coverageLimited === true ? "扫描区域受限，结果可能不完整" : warnings[0];
   const progress = isProgress ? Number(data.progress ?? 0) : undefined;
 
   return {
@@ -120,7 +153,7 @@ export function buildMessageView(message: MessageRecord): MessageView {
     rationale,
     showThink: isSummary,
     showTaskChain: isProgress,
-    stage: isProgress ? String(data.stage ?? "正在处理") : undefined,
+    stage: isProgress ? publicStage(String(data.stage ?? "正在处理"), data) : undefined,
     progress,
     taskStatus: isProgress ? (data.status === "failed" ? "error" : progress === 100 ? "success" : "loading") : undefined,
     data,

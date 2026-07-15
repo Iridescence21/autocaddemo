@@ -43,9 +43,23 @@ const stages = [
 
 const sleep = (milliseconds: number) => milliseconds > 0 ? new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)) : Promise.resolve();
 
+async function appendProgressMessage(
+  conversationId: string,
+  ownerScope: string,
+  jobId: string,
+  input: { status: string; stage: string; progress: number },
+) {
+  await appendMessage(conversationId, {
+    ownerScope,
+    role: "assistant",
+    type: "analysis_progress",
+    payload: { jobId, ...input },
+  });
+}
+
 async function progress(drawingId: string, ownerScope: string, conversationId: string, jobId: string, item: (typeof stages)[number], delayMs: number) {
   await updateAnalysisStatus(drawingId, ownerScope, { status: item.status, progress: item.progress, stage: item.stage });
-  await appendMessage(conversationId, { ownerScope, role: "assistant", type: "analysis_progress", payload: { jobId, status: item.status, stage: item.stage, progress: item.progress } });
+  await appendProgressMessage(conversationId, ownerScope, jobId, item);
   await sleep(delayMs);
 }
 
@@ -142,12 +156,10 @@ export async function persistAnalysisFailure(drawingId: string, ownerScope: stri
   const failure = describeAnalysisFailure(error);
   const current = await getAnalysisSnapshot(drawingId, ownerScope);
   if (!current?.job) return failure;
-  await updateAnalysisStatus(drawingId, ownerScope, {
+  await appendProgressMessage(current.drawing.conversationId, ownerScope, current.job.id, {
     status: "failed",
     progress: current.job.progress,
     stage: failure.stage,
-    errorCode: failure.code,
-    errorMessage: failure.userMessage,
   });
   await appendMessage(current.drawing.conversationId, {
     ownerScope,
@@ -155,7 +167,53 @@ export async function persistAnalysisFailure(drawingId: string, ownerScope: stri
     type: "error",
     payload: { code: failure.code, message: failure.userMessage },
   });
+  await updateAnalysisStatus(drawingId, ownerScope, {
+    status: "failed",
+    progress: current.job.progress,
+    stage: failure.stage,
+    errorCode: failure.code,
+    errorMessage: failure.userMessage,
+  });
   return failure;
+}
+
+async function completeStructuralOnlyAnalysis(input: {
+  drawingId: string;
+  ownerScope: string;
+  conversationId: string;
+  jobId: string;
+  rendered: RenderedCadDrawing;
+  structuralSnapshot: StructuralSnapshot;
+  warning: string;
+}) {
+  const structuralBom = await replaceBomFromNativeRows(input.drawingId, input.ownerScope, input.structuralSnapshot.bomRows);
+  const structuralSummary = `已读取 CAD 原生数据：${input.structuralSnapshot.counts.texts} 条文字、${input.structuralSnapshot.counts.structuralTags} 条设备代号、${input.structuralSnapshot.counts.bomRows} 行 BOM。`;
+  await appendMessage(input.conversationId, {
+    ownerScope: input.ownerScope,
+    role: "assistant",
+    type: "drawing_summary",
+    payload: { drawingId: input.drawingId, summary: structuralSummary, warnings: [input.warning], structuralOnly: true },
+  });
+  await appendMessage(input.conversationId, {
+    ownerScope: input.ownerScope,
+    role: "assistant",
+    type: "bom_results",
+    payload: { drawingId: input.drawingId, physicalDeviceCount: 0, itemCount: structuralBom?.items.length ?? 0, totalQuantity: structuralBom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0, structuralOnly: true },
+  });
+  await appendProgressMessage(input.conversationId, input.ownerScope, input.jobId, {
+    status: "requires_review",
+    progress: 100,
+    stage: "CAD 结构分析完成（视觉识别受限）",
+  });
+  await updateAnalysisStatus(input.drawingId, input.ownerScope, { status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
+  return {
+    status: "requires_review" as const,
+    components: [],
+    physicalDevices: [],
+    bomItems: structuralBom?.items ?? [],
+    analysisDiagnostics: { attemptedTiles: input.rendered.tiles.length, completedTiles: 0, failedTiles: input.rendered.tiles.length, verificationTiles: 0, rawDetectionCount: 0, coverageLimited: true },
+    structuralOnly: true,
+  };
 }
 
 export async function runDrawingAnalysis(drawingId: string, ownerScope: string, overrides: Partial<AnalysisDeps> = {}) {
@@ -181,37 +239,24 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
     if (structuralSnapshot.bomRows.length) await replaceBomFromNativeRows(drawingId, ownerScope, structuralSnapshot.bomRows);
   }
   for (const item of stages.slice(2, 4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
+  if (sourceType === "dwg" && structuralSnapshot?.bomRows.length && process.env.DWG_VISION_AFTER_NATIVE_BOM !== "1") {
+    return completeStructuralOnlyAnalysis({
+      drawingId,
+      ownerScope,
+      conversationId: snapshot.drawing.conversationId,
+      jobId: snapshot.job.id,
+      rendered,
+      structuralSnapshot,
+      warning: "已使用 CAD 原生 BOM 和文字证据生成结果；视觉识别未在演示路径中等待，结果需工程师复核。",
+    });
+  }
   let analysis: AnalyzerResult;
   try {
     analysis = await analyzer.analyze({ drawingId, sourcePath, rendered });
   } catch (error) {
     if (!structuralSnapshot?.bomRows.length) throw error;
-    const structuralBom = structuralSnapshot.bomRows.length
-      ? await replaceBomFromNativeRows(drawingId, ownerScope, structuralSnapshot.bomRows)
-      : { items: [] };
     const visualWarning = error instanceof VisionAnalysisError ? error.userMessage : "视觉模型未完成，本次结果仅使用 CAD 原生文字与表格证据。";
-    const structuralSummary = `已读取 CAD 原生数据：${structuralSnapshot.counts.texts} 条文字、${structuralSnapshot.counts.structuralTags} 条设备代号、${structuralSnapshot.counts.bomRows} 行 BOM。`;
-    await appendMessage(snapshot.drawing.conversationId, {
-      ownerScope,
-      role: "assistant",
-      type: "drawing_summary",
-      payload: { drawingId, summary: structuralSummary, warnings: [visualWarning], structuralOnly: true },
-    });
-    await appendMessage(snapshot.drawing.conversationId, {
-      ownerScope,
-      role: "assistant",
-      type: "bom_results",
-      payload: { drawingId, physicalDeviceCount: 0, itemCount: structuralBom?.items.length ?? 0, totalQuantity: structuralBom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0, structuralOnly: true },
-    });
-    await updateAnalysisStatus(drawingId, ownerScope, { status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
-    return {
-      status: "requires_review" as const,
-      components: [],
-      physicalDevices: [],
-      bomItems: structuralBom?.items ?? [],
-      analysisDiagnostics: { attemptedTiles: rendered.tiles.length, completedTiles: 0, failedTiles: rendered.tiles.length, verificationTiles: 0, rawDetectionCount: 0, coverageLimited: true },
-      structuralOnly: true,
-    };
+    return completeStructuralOnlyAnalysis({ drawingId, ownerScope, conversationId: snapshot.drawing.conversationId, jobId: snapshot.job.id, rendered, structuralSnapshot, warning: visualWarning });
   }
   for (const item of stages.slice(4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
   const componentInputs = componentsFromAnalysis(analysisMode, analysis, rendered);
@@ -260,6 +305,11 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
     payload: { drawingId, physicalDeviceCount: physicalDevices.length, itemCount: bom?.items.length ?? 0, totalQuantity: bom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0 },
   });
   const finalStatus = reviewCount || unknownCount || components.length === 0 || hasLimitedCoverage(analysisDiagnostics) ? "requires_review" : "completed";
+  await appendProgressMessage(snapshot.drawing.conversationId, ownerScope, snapshot.job.id, {
+    status: finalStatus,
+    progress: 100,
+    stage: "分析完成",
+  });
   await updateAnalysisStatus(drawingId, ownerScope, { status: finalStatus, progress: 100, stage: "分析完成" });
   return { status: finalStatus, components, physicalDevices, bomItems: bom?.items ?? [], analysisDiagnostics };
 }

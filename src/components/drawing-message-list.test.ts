@@ -37,6 +37,23 @@ describe("drawing message view model", () => {
     expect(summary.rationale).toContain("块名和图层共同匹配");
   });
 
+  it("presents structural-only completion as demo-friendly CAD evidence", () => {
+    const summary = buildMessageView(message("drawing_summary", {
+      summary: "已读取 CAD 原生数据：989 条文字、196 条设备代号、42 行 BOM。",
+      warnings: ["已使用 CAD 原生 BOM 和文字证据生成结果；视觉识别未在演示路径中等待，结果需工程师复核。"],
+      structuralOnly: true,
+    }));
+    const progress = buildMessageView(message("analysis_progress", {
+      status: "requires_review",
+      progress: 100,
+      stage: "CAD 结构分析完成（视觉识别受限）",
+    }));
+
+    expect(summary.text).toBe("已读取 CAD 原生数据：989 条文字、196 条设备代号、42 行 BOM。");
+    expect(summary.warning).toBe("结果来自 CAD 原生文字和 BOM 表格，需工程师复核。");
+    expect(progress.stage).toBe("CAD 结构分析完成");
+  });
+
   it("uses ThoughtChain for real CAD stages and keeps limited coverage visible", () => {
     const progress = buildMessageView(message("analysis_progress", { stage: "切分分析瓦片", progress: 62, status: "analyzing" }));
     const result = buildMessageView(message("component_results", { symbolOccurrenceCount: 12, physicalDeviceCount: 8, coverageLimited: true }));
