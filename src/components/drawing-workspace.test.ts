@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MessageRecord } from "./workspace-types";
+import { refreshMessagesAfterTerminal } from "./workspace-model";
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("Ant Design X Chinese drawing workspace", () => {
   it("uses the official responsive two-column independent layout", async () => {
@@ -95,5 +99,14 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(source).toContain("`/api/conversations/${conversationId}/query`");
     expect(source).toContain("question: finalText");
     expect(source).not.toContain("当前演示版支持筛选元件、选择标签、修改分类、移除元件、生成 BOM 和导出结果");
+  });
+
+  it("refreshes messages after terminal job detection so stale progress is not retained", async () => {
+    const staleProgress: MessageRecord = { id: "stale", type: "analysis_progress", role: "assistant", payload: { status: "analyzing", progress: 92 }, createdAt: "2026-07-15T00:00:00.000Z" };
+    const terminalProgress: MessageRecord = { id: "terminal", type: "analysis_progress", role: "assistant", payload: { status: "completed", progress: 100 }, createdAt: "2026-07-15T00:00:01.000Z" };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ messages: [terminalProgress] }), { status: 200 }));
+
+    await expect(refreshMessagesAfterTerminal("conversation-1", "completed", [staleProgress])).resolves.toEqual([terminalProgress]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/conversations/conversation-1/messages", { cache: "no-store" });
   });
 });

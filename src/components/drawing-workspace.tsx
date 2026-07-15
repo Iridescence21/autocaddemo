@@ -20,6 +20,7 @@ import { COMPONENT_CATEGORY_LABELS } from "@/lib/presentation/component-list";
 import ConversationSidebar from "./conversation-sidebar";
 import DrawingMessageList from "./drawing-message-list";
 import WorkspaceShell from "./workspace-shell";
+import { refreshMessagesAfterTerminal } from "./workspace-model";
 import type { AttachmentItem, Conversation, MessageRecord } from "./workspace-types";
 import styles from "./drawing-workspace.module.css";
 
@@ -61,8 +62,13 @@ export default function DrawingWorkspace() {
       fetch(`/api/drawing-conversations/${id}`, { cache: "no-store" }),
       fetch(`/api/conversations/${id}/messages`, { cache: "no-store" }),
     ]);
-    if (conversationResponse.ok) setSnapshot(((await conversationResponse.json()) as { conversation: Conversation }).conversation);
-    if (messagesResponse.ok) setMessages(((await messagesResponse.json()) as { messages: MessageRecord[] }).messages);
+    const nextSnapshot = conversationResponse.ok ? ((await conversationResponse.json()) as { conversation: Conversation }).conversation : null;
+    if (nextSnapshot) setSnapshot(nextSnapshot);
+    if (messagesResponse.ok) {
+      const initialMessages = ((await messagesResponse.json()) as { messages: MessageRecord[] }).messages;
+      const status = nextSnapshot?.drawing?.analysisJob?.status;
+      setMessages(status ? await refreshMessagesAfterTerminal(id, status, initialMessages) : initialMessages);
+    }
   }, []);
 
   useEffect(() => { queueMicrotask(() => void loadConversations()); }, [loadConversations]);

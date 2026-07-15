@@ -1,6 +1,15 @@
 import type { Drawing, MessageRecord, SessionFileGroup } from "./workspace-types";
 import { projectWorkspaceResultState } from "@/lib/presentation/component-list";
 
+const terminalAnalysisStatuses = new Set(["completed", "requires_review", "failed"]);
+
+export async function refreshMessagesAfterTerminal(conversationId: string, status: string, currentMessages: MessageRecord[]) {
+  if (!terminalAnalysisStatuses.has(status)) return currentMessages;
+  const response = await fetch(`/api/conversations/${conversationId}/messages`, { cache: "no-store" });
+  if (!response.ok) return currentMessages;
+  return ((await response.json()) as { messages: MessageRecord[] }).messages;
+}
+
 export function messagePayload(message: MessageRecord) {
   return (message.payload ?? {}) as Record<string, unknown>;
 }
