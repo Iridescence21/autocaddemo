@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -306,5 +306,19 @@ describe("demo analysis service", () => {
       stage: "CAD 结构分析完成（视觉识别受限）",
       progress: 100,
     });
+  });
+
+  it("persists every terminal progress message before exposing its terminal job status", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/lib/analysis/service.ts"), "utf8");
+    const failureBlock = source.slice(source.indexOf("export async function persistAnalysisFailure"), source.indexOf("export async function runDrawingAnalysis"));
+    const structuralBlock = source.slice(source.indexOf("const visualWarning"), source.indexOf("return {\n      status: \"requires_review\" as const"));
+    const normalBlock = source.slice(source.indexOf("const finalStatus"), source.indexOf("return { status: finalStatus"));
+
+    expect(failureBlock.indexOf("await appendProgressMessage")).toBeLessThan(failureBlock.indexOf('await appendMessage(current.drawing.conversationId, {'));
+    const failedUpdateIndex = failureBlock.indexOf("await updateAnalysisStatus(drawingId, ownerScope");
+    const structuralUpdateIndex = structuralBlock.indexOf("await updateAnalysisStatus(drawingId, ownerScope, { status: \"requires_review\"");
+    expect(failureBlock.indexOf('await appendMessage(current.drawing.conversationId, {')).toBeLessThan(failedUpdateIndex);
+    expect(structuralBlock.indexOf("await appendProgressMessage")).toBeLessThan(structuralUpdateIndex);
+    expect(normalBlock.indexOf("await appendProgressMessage")).toBeLessThan(normalBlock.indexOf("await updateAnalysisStatus(drawingId, ownerScope"));
   });
 });

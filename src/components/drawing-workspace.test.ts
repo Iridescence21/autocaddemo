@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessageRecord } from "./workspace-types";
-import { refreshMessagesAfterTerminal } from "./workspace-model";
+import { createLatestRequestGuard, refreshMessagesAfterTerminal } from "./workspace-model";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -108,5 +108,29 @@ describe("Ant Design X Chinese drawing workspace", () => {
 
     await expect(refreshMessagesAfterTerminal("conversation-1", "completed", [staleProgress])).resolves.toEqual([terminalProgress]);
     expect(fetchMock).toHaveBeenCalledWith("/api/conversations/conversation-1/messages", { cache: "no-store" });
+  });
+
+  it("retains current messages when the bounded terminal refresh fails", async () => {
+    const currentMessages: MessageRecord[] = [{ id: "stale", type: "analysis_progress", role: "assistant", payload: { status: "analyzing", progress: 92 }, createdAt: "2026-07-15T00:00:00.000Z" }];
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network unavailable"));
+
+    await expect(refreshMessagesAfterTerminal("conversation-1", "failed", currentMessages)).resolves.toBe(currentMessages);
+  });
+
+  it("prevents an older load token from applying after a newer load starts", () => {
+    const guard = createLatestRequestGuard();
+    const older = guard.next();
+    const newer = guard.next();
+
+    expect(guard.isCurrent(older)).toBe(false);
+    expect(guard.isCurrent(newer)).toBe(true);
+  });
+
+  it("guards active-load state writes with the latest request token", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+
+    expect(source).toContain("loadRequestGuard");
+    expect(source).toContain("const requestToken = loadRequestGuard.current.next()");
+    expect(source).toContain("if (!loadRequestGuard.current.isCurrent(requestToken)) return;");
   });
 });

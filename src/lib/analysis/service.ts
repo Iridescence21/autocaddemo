@@ -156,13 +156,6 @@ export async function persistAnalysisFailure(drawingId: string, ownerScope: stri
   const failure = describeAnalysisFailure(error);
   const current = await getAnalysisSnapshot(drawingId, ownerScope);
   if (!current?.job) return failure;
-  await updateAnalysisStatus(drawingId, ownerScope, {
-    status: "failed",
-    progress: current.job.progress,
-    stage: failure.stage,
-    errorCode: failure.code,
-    errorMessage: failure.userMessage,
-  });
   await appendProgressMessage(current.drawing.conversationId, ownerScope, current.job.id, {
     status: "failed",
     progress: current.job.progress,
@@ -173,6 +166,13 @@ export async function persistAnalysisFailure(drawingId: string, ownerScope: stri
     role: "assistant",
     type: "error",
     payload: { code: failure.code, message: failure.userMessage },
+  });
+  await updateAnalysisStatus(drawingId, ownerScope, {
+    status: "failed",
+    progress: current.job.progress,
+    stage: failure.stage,
+    errorCode: failure.code,
+    errorMessage: failure.userMessage,
   });
   return failure;
 }
@@ -222,12 +222,12 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
       type: "bom_results",
       payload: { drawingId, physicalDeviceCount: 0, itemCount: structuralBom?.items.length ?? 0, totalQuantity: structuralBom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0, structuralOnly: true },
     });
-    await updateAnalysisStatus(drawingId, ownerScope, { status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
     await appendProgressMessage(snapshot.drawing.conversationId, ownerScope, snapshot.job.id, {
       status: "requires_review",
       progress: 100,
       stage: "CAD 结构分析完成（视觉识别受限）",
     });
+    await updateAnalysisStatus(drawingId, ownerScope, { status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
     return {
       status: "requires_review" as const,
       components: [],
@@ -284,12 +284,12 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
     payload: { drawingId, physicalDeviceCount: physicalDevices.length, itemCount: bom?.items.length ?? 0, totalQuantity: bom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0 },
   });
   const finalStatus = reviewCount || unknownCount || components.length === 0 || hasLimitedCoverage(analysisDiagnostics) ? "requires_review" : "completed";
-  await updateAnalysisStatus(drawingId, ownerScope, { status: finalStatus, progress: 100, stage: "分析完成" });
   await appendProgressMessage(snapshot.drawing.conversationId, ownerScope, snapshot.job.id, {
     status: finalStatus,
     progress: 100,
     stage: "分析完成",
   });
+  await updateAnalysisStatus(drawingId, ownerScope, { status: finalStatus, progress: 100, stage: "分析完成" });
   return { status: finalStatus, components, physicalDevices, bomItems: bom?.items ?? [], analysisDiagnostics };
 }
 

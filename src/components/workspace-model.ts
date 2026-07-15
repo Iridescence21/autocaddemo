@@ -3,11 +3,28 @@ import { projectWorkspaceResultState } from "@/lib/presentation/component-list";
 
 const terminalAnalysisStatuses = new Set(["completed", "requires_review", "failed"]);
 
+export function createLatestRequestGuard() {
+  let latestRequest = 0;
+  return {
+    next() {
+      latestRequest += 1;
+      return latestRequest;
+    },
+    isCurrent(request: number) {
+      return request === latestRequest;
+    },
+  };
+}
+
 export async function refreshMessagesAfterTerminal(conversationId: string, status: string, currentMessages: MessageRecord[]) {
   if (!terminalAnalysisStatuses.has(status)) return currentMessages;
-  const response = await fetch(`/api/conversations/${conversationId}/messages`, { cache: "no-store" });
-  if (!response.ok) return currentMessages;
-  return ((await response.json()) as { messages: MessageRecord[] }).messages;
+  try {
+    const response = await fetch(`/api/conversations/${conversationId}/messages`, { cache: "no-store" });
+    if (!response.ok) return currentMessages;
+    return ((await response.json()) as { messages: MessageRecord[] }).messages;
+  } catch {
+    return currentMessages;
+  }
 }
 
 export function messagePayload(message: MessageRecord) {
