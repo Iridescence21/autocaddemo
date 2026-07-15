@@ -170,6 +170,13 @@ describe("demo analysis service", () => {
     expect(result.bomItems.length).toBeGreaterThan(0);
     const messages = await listMessages(conversation.id, "demo-user");
     expect(messages.some((message) => message.type === "analysis_progress")).toBe(true);
+    const progressMessages = messages.filter((message) => message.type === "analysis_progress");
+    expect(progressMessages.at(-1)?.payload).toMatchObject({
+      jobId: drawing.analysisJob?.id,
+      status: "requires_review",
+      stage: "分析完成",
+      progress: 100,
+    });
     expect(messages.some((message) => message.type === "component_results")).toBe(true);
   });
 
@@ -248,6 +255,13 @@ describe("demo analysis service", () => {
     const snapshot = await getAnalysisSnapshot(drawing.id, "demo-user");
     expect(snapshot?.job?.status).toBe("failed");
     expect(snapshot?.job?.progress).toBe(68);
+    const messages = await listMessages(conversation.id, "demo-user");
+    expect(messages.filter((message) => message.type === "analysis_progress").at(-1)?.payload).toMatchObject({
+      jobId: drawing.analysisJob?.id,
+      status: "failed",
+      stage: "分析失败",
+      progress: 68,
+    });
   });
 
   it("persists native CAD evidence and BOM before visual analysis runs", async () => {
@@ -285,5 +299,12 @@ describe("demo analysis service", () => {
     expect(snapshot?.drawing.structuralSnapshot).toMatchObject({ schemaVersion: 1, counts: { bomRows: 1 } });
     expect(snapshot?.bomItems).toMatchObject([{ description: "电流继电器", modelNumber: "LL-61E/5", quantity: 3 }]);
     expect(snapshot?.job).toMatchObject({ status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
+    const messages = await listMessages(conversation.id, "demo-user");
+    expect(messages.filter((message) => message.type === "analysis_progress").at(-1)?.payload).toMatchObject({
+      jobId: drawing.analysisJob?.id,
+      status: "requires_review",
+      stage: "CAD 结构分析完成（视觉识别受限）",
+      progress: 100,
+    });
   });
 });
