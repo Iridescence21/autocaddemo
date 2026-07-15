@@ -163,6 +163,10 @@ export async function regroupActivePhysicalDevicesInTransaction(
 }
 
 export async function generateBom(drawingId: string, ownerScope: string) {
+  const existingDrawing = await prisma.drawing.findFirst({ where: { id: drawingId, ownerScope }, select: { structuralSnapshot: true } });
+  if (!existingDrawing) return null;
+  const nativeRows = nativeRowsFromSnapshot(existingDrawing.structuralSnapshot);
+  if (nativeRows.length) return replaceBomFromNativeRows(drawingId, ownerScope, nativeRows);
   return prisma.$transaction(async (tx) => {
     const drawing = await tx.drawing.findFirst({ where: { id: drawingId, ownerScope } });
     if (!drawing) return null;
@@ -171,6 +175,20 @@ export async function generateBom(drawingId: string, ownerScope: string) {
     if (!physicalDeviceCount && activeComponentCount) await regroupActivePhysicalDevicesInTransaction(tx, drawingId, ownerScope);
     return generateBomInTransaction(tx, drawingId);
   });
+}
+
+function nativeRowsFromSnapshot(value: unknown): NativeBomRow[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const rows = (value as { bomRows?: unknown }).bomRows;
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row): row is NativeBomRow => Boolean(
+    row
+    && typeof row === "object"
+    && typeof (row as NativeBomRow).itemNumber === "number"
+    && typeof (row as NativeBomRow).name === "string"
+    && typeof (row as NativeBomRow).rawSymbol === "string"
+    && Array.isArray((row as NativeBomRow).symbolTags),
+  ));
 }
 
 function categoryFromNativeName(name: string): ComponentInput["category"] {

@@ -67,4 +67,12 @@ describe("Ant Design X Chinese drawing workspace", () => {
     expect(source).not.toContain("function WorkspaceResult");
     expect(source).not.toMatch(/style=\{\{/);
   });
+
+  it("routes unmatched natural-language questions to the drawing evidence API", async () => {
+    const source = await readFile(resolve(process.cwd(), "src/components/drawing-workspace.tsx"), "utf8");
+
+    expect(source).toContain("`/api/conversations/${conversationId}/query`");
+    expect(source).toContain("question: finalText");
+    expect(source).not.toContain("当前演示版支持筛选元件、选择标签、修改分类、移除元件、生成 BOM 和导出结果");
+  });
 });

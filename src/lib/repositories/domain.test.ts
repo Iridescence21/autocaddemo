@@ -142,14 +142,21 @@ describe("drawing analysis persistence", () => {
   it("replaces the visible BOM with native CAD table rows", async () => {
     const conversation = await createConversation({ ownerScope: "demo-user", title: "Native BOM" });
     const drawing = await createDrawingUpload({ conversationId: conversation.id, ownerScope: "demo-user", originalFilename: "native.dwg", safeFilename: "native.dwg", storageKey: "demo/native.dwg", sourceType: "dwg", byteSize: 1 });
-    const result = await replaceBomFromNativeRows(drawing.id, "demo-user", [
+    const nativeRows = [
       { itemNumber: 5, rawSymbol: "KC1,2,3", symbolTags: ["KC1", "KC2", "KC3"], name: "电流继电器", modelSpec: "LL-61E/□", quantity: 3, cadPosition: { x: 1, y: 2 }, evidenceHandles: ["a"] },
       { itemNumber: 6, rawSymbol: "KC4", symbolTags: ["KC4"], name: "电流继电器", modelSpec: "LL-63E/□", quantity: 1, cadPosition: { x: 1, y: 1 }, evidenceHandles: ["b"] },
-    ]);
+    ];
+    const result = await replaceBomFromNativeRows(drawing.id, "demo-user", nativeRows);
 
     expect(result?.items).toMatchObject([
       { itemNumber: 5, category: "relay", description: "电流继电器", modelNumber: "LL-61E/□", quantity: 3, reviewStatus: "confirmed" },
       { itemNumber: 6, category: "relay", description: "电流继电器", modelNumber: "LL-63E/□", quantity: 1, reviewStatus: "confirmed" },
+    ]);
+
+    await saveStructuralSnapshot(drawing.id, "demo-user", { schemaVersion: 1, counts: { entities: 1, texts: 1, blocks: 0, layers: 1, structuralTags: 4, bomRows: 2 }, tags: [], bomRows: nativeRows, reviewIssues: [] });
+    expect((await generateBom(drawing.id, "demo-user"))?.items).toMatchObject([
+      { itemNumber: 5, description: "电流继电器", quantity: 3 },
+      { itemNumber: 6, description: "电流继电器", quantity: 1 },
     ]);
   });
 
