@@ -93,6 +93,13 @@ describe("drawing evidence questions", () => {
     expect(answer.text).toContain("已经提取出的标签集合包括：");
   });
 
+  it("ignores leading numbered prompt prefixes when detecting basic-info questions", () => {
+    const answer = answerDrawingQuestion({ question: "2.跟我讲一下这个图纸的基本信息", currentDrawingId: "drawing-02", drawings });
+
+    expect(answer.intent).toBe("overview");
+    expect(answer.text).toContain("这张 M-T1-02 基本信息：");
+  });
+
   it("returns an actionable response when no analyzed device matches", () => {
     const answer = answerDrawingQuestion({ question: "真空接触器有多少只？", currentDrawingId: "drawing-02", drawings });
 

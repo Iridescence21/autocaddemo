@@ -19,7 +19,7 @@ export type DrawingQuestionAnswer = {
 };
 
 function normalize(value: string) {
-  return value.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
+  return value.normalize("NFKC").replace(/^\s*\d+[.．、)]\s*/, "").replace(/\s+/g, "").toLowerCase();
 }
 
 function quantity(row: NativeBomRow) {
