@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import type { ComponentCandidate, PhysicalDevice, Prisma } from "@prisma/client/index";
 import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
 import type { ComponentInput, PhysicalDeviceInput } from "@/lib/domain";
+import type { NativeBomRow } from "@/lib/cad/native-bom";
 
 export function assertUniqueComponentTemporaryIds(components: ComponentInput[]) {
   const seen = new Set<string>();
@@ -162,6 +163,10 @@ export async function regroupActivePhysicalDevicesInTransaction(
 }
 
 export async function generateBom(drawingId: string, ownerScope: string) {
+  const existingDrawing = await prisma.drawing.findFirst({ where: { id: drawingId, ownerScope }, select: { structuralSnapshot: true } });
+  if (!existingDrawing) return null;
+  const nativeRows = nativeRowsFromSnapshot(existingDrawing.structuralSnapshot);
+  if (nativeRows.length) return replaceBomFromNativeRows(drawingId, ownerScope, nativeRows);
   return prisma.$transaction(async (tx) => {
     const drawing = await tx.drawing.findFirst({ where: { id: drawingId, ownerScope } });
     if (!drawing) return null;
@@ -169,6 +174,55 @@ export async function generateBom(drawingId: string, ownerScope: string) {
     const activeComponentCount = await tx.componentCandidate.count({ where: { drawingId, removedAt: null } });
     if (!physicalDeviceCount && activeComponentCount) await regroupActivePhysicalDevicesInTransaction(tx, drawingId, ownerScope);
     return generateBomInTransaction(tx, drawingId);
+  });
+}
+
+function nativeRowsFromSnapshot(value: unknown): NativeBomRow[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const rows = (value as { bomRows?: unknown }).bomRows;
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row): row is NativeBomRow => Boolean(
+    row
+    && typeof row === "object"
+    && typeof (row as NativeBomRow).itemNumber === "number"
+    && typeof (row as NativeBomRow).name === "string"
+    && typeof (row as NativeBomRow).rawSymbol === "string"
+    && Array.isArray((row as NativeBomRow).symbolTags),
+  ));
+}
+
+function categoryFromNativeName(name: string): ComponentInput["category"] {
+  if (name.includes("断路器")) return "circuit_breaker";
+  if (name.includes("熔断器")) return "fuse";
+  if (name.includes("继电器") || name.includes("脱扣器")) return "relay";
+  if (name.includes("按钮")) return "push_button";
+  if (name.includes("开关")) return "switch";
+  if (name.includes("变压器")) return "transformer";
+  if (name.includes("端子") || name.includes("连接片") || name.includes("切换片")) return "terminal_block";
+  if (name.includes("信号灯") || name.includes("辉光灯")) return "indicator_light";
+  return "unknown";
+}
+
+export async function replaceBomFromNativeRows(drawingId: string, ownerScope: string, rows: NativeBomRow[]) {
+  return prisma.$transaction(async (tx) => {
+    const drawing = await tx.drawing.findFirst({ where: { id: drawingId, ownerScope } });
+    if (!drawing) return null;
+    await tx.bomItem.deleteMany({ where: { drawingId } });
+    if (rows.length) {
+      await tx.bomItem.createMany({ data: rows.map((row) => ({
+        drawingId,
+        itemNumber: row.itemNumber,
+        category: categoryFromNativeName(row.name),
+        description: row.name,
+        manufacturer: null,
+        modelNumber: row.modelSpec,
+        specifications: jsonValue([`图纸代号：${row.rawSymbol}`, ...row.evidenceHandles.map((handle) => `CAD句柄：${handle}`)]),
+        quantity: row.quantity ?? (row.symbolTags.length || 1),
+        confidence: 0.99,
+        reviewStatus: row.quantity !== null && row.modelSpec ? "confirmed" : "requires_review",
+      })) });
+    }
+    return { items: await tx.bomItem.findMany({ where: { drawingId }, orderBy: { itemNumber: "asc" } }) };
   });
 }
 

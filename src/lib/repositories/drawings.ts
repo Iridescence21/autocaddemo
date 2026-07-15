@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import type { Prisma } from "@prisma/client/index";
 import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
 import { assertUniqueComponentTemporaryIds, replacePhysicalDevicesInTransaction } from "@/lib/repositories/components";
+import type { StructuralSnapshot } from "@/lib/cad/native-bom";
 
 export async function createDrawingUpload(input: {
   conversationId: string;
@@ -84,6 +85,23 @@ export async function saveDrawingPreview(drawingId: string, ownerScope: string, 
     data: { previewImageUrl: preview.overviewImageUrl, previewWidth: preview.width, previewHeight: preview.height, previewTiles: JSON.parse(JSON.stringify(preview.tiles)) as Prisma.InputJsonValue },
   });
   return result.count > 0;
+}
+
+export async function saveStructuralSnapshot(drawingId: string, ownerScope: string, snapshot: StructuralSnapshot) {
+  const result = await prisma.drawing.updateMany({
+    where: { id: drawingId, ownerScope },
+    data: { structuralSnapshot: JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue },
+  });
+  return result.count > 0;
+}
+
+export async function listStructuralDrawings(ownerScope: string) {
+  const drawings = await prisma.drawing.findMany({
+    where: { ownerScope },
+    select: { id: true, conversationId: true, originalFilename: true, status: true, structuralSnapshot: true },
+    orderBy: { createdAt: "asc" },
+  });
+  return drawings.filter((drawing) => drawing.structuralSnapshot !== null);
 }
 
 export async function getAnalysisSnapshot(drawingId: string, ownerScope: string) {

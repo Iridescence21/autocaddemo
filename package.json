@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -13,7 +13,9 @@
     "db:push": "prisma db push",
     "worker": "tsx src/worker.ts",
     "smoke:dxf": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-real-dxf.ts",
-    "smoke:dwg": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-real-dwg.ts"
+    "smoke:dwg": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-real-dwg.ts",
+    "smoke:hybrid-dwg": "node --env-file-if-exists=.env.local --import tsx scripts/smoke-hybrid-dwg.ts",
+    "smoke:drawing-qa": "DATABASE_URL=file:/tmp/dwg-electrical-qa-smoke.db node --env-file-if-exists=.env.local --import tsx scripts/smoke-drawing-qa.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",

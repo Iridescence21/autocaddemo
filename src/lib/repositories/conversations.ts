@@ -25,6 +25,19 @@ export async function updateConversation(id: string, ownerScope: string, data: {
 }
 
 export async function deleteConversation(id: string, ownerScope: string) {
-  const result = await prisma.drawingConversation.deleteMany({ where: { id, ownerScope } });
-  return result.count > 0;
+  return prisma.$transaction(async (tx) => {
+    const conversation = await tx.drawingConversation.findFirst({
+      where: { id, ownerScope },
+      select: { drawing: { select: { id: true } } },
+    });
+    if (!conversation) return false;
+    if (conversation.drawing) {
+      await tx.componentCandidate.updateMany({
+        where: { drawingId: conversation.drawing.id, physicalDeviceId: { not: null } },
+        data: { physicalDeviceId: null },
+      });
+    }
+    const result = await tx.drawingConversation.deleteMany({ where: { id, ownerScope } });
+    return result.count > 0;
+  });
 }

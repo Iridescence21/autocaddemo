@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ComponentInput } from "@/lib/domain";
 import { appendMessage } from "@/lib/repositories/messages";
-import { getAnalysisSnapshot, saveDrawingPreview, updateAnalysisStatus } from "@/lib/repositories/drawings";
-import { generateBom, replaceComponents, replacePhysicalDevices } from "@/lib/repositories/components";
+import { getAnalysisSnapshot, saveDrawingPreview, saveStructuralSnapshot, updateAnalysisStatus } from "@/lib/repositories/drawings";
+import { generateBom, replaceBomFromNativeRows, replaceComponents, replacePhysicalDevices } from "@/lib/repositories/components";
 import { groupPhysicalDevices, type DeviceOccurrence } from "@/lib/devices/group";
 import { demoAnalyzer } from "@/lib/cad/demo-analyzer";
 import { demoRenderer } from "@/lib/cad/demo-renderer";
@@ -12,7 +12,10 @@ import type { CadRenderAdapter, CadSourceType, DemoAnalysisResult, RenderedCadDr
 import { openAiVisionAnalyzer, VisionAnalysisError } from "@/lib/vision/openai-analyzer";
 import type { DrawingVisionAnalyzer, ValidatedVisionResult, VisionAnalysisDiagnostics } from "@/lib/vision/types";
 import { consolidateVisionComponents } from "@/lib/vision/consolidate";
+import { buildStructuralEvidence } from "@/lib/cad/structural-evidence";
+import { fuseCadAndVisionComponents } from "@/lib/vision/fuse-cad-vision";
 import { formatCategorizedComponents } from "@/lib/presentation/component-list";
+import { buildStructuralSnapshot, type StructuralSnapshot } from "@/lib/cad/native-bom";
 
 type AnalyzerResult = DemoAnalysisResult | ValidatedVisionResult;
 export type Analyzer = { analyze(input: { drawingId: string; sourcePath: string; rendered: RenderedCadDrawing }): Promise<AnalyzerResult> };
@@ -61,7 +64,12 @@ export async function selectDefaultAdapters(
 }
 
 function componentsFromAnalysis(mode: AnalysisMode, analysis: AnalyzerResult, rendered: RenderedCadDrawing): ComponentInput[] {
-  if (mode === "vision") return consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
+  if (mode === "vision") {
+    const visualComponents = consolidateVisionComponents(analysis as ValidatedVisionResult, rendered);
+    const context = rendered.metadata?.context;
+    if (!context) return visualComponents;
+    return fuseCadAndVisionComponents(visualComponents, buildStructuralEvidence(context, rendered));
+  }
   return (analysis as DemoAnalysisResult).components;
 }
 
@@ -166,13 +174,52 @@ export async function runDrawingAnalysis(drawingId: string, ownerScope: string, 
   for (const item of stages.slice(0, 2)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
   const rendered = await renderer.render({ drawingId, sourcePath, sourceType });
   await saveDrawingPreview(drawingId, ownerScope, { overviewImageUrl: rendered.overviewImageUrl, width: rendered.width, height: rendered.height, tiles: rendered.tiles });
+  let structuralSnapshot: StructuralSnapshot | null = null;
+  if (rendered.metadata?.context) {
+    structuralSnapshot = buildStructuralSnapshot(rendered.metadata.context, rendered);
+    await saveStructuralSnapshot(drawingId, ownerScope, structuralSnapshot);
+    if (structuralSnapshot.bomRows.length) await replaceBomFromNativeRows(drawingId, ownerScope, structuralSnapshot.bomRows);
+  }
   for (const item of stages.slice(2, 4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
-  const analysis = await analyzer.analyze({ drawingId, sourcePath, rendered });
+  let analysis: AnalyzerResult;
+  try {
+    analysis = await analyzer.analyze({ drawingId, sourcePath, rendered });
+  } catch (error) {
+    if (!structuralSnapshot?.bomRows.length) throw error;
+    const structuralBom = structuralSnapshot.bomRows.length
+      ? await replaceBomFromNativeRows(drawingId, ownerScope, structuralSnapshot.bomRows)
+      : { items: [] };
+    const visualWarning = error instanceof VisionAnalysisError ? error.userMessage : "视觉模型未完成，本次结果仅使用 CAD 原生文字与表格证据。";
+    const structuralSummary = `已读取 CAD 原生数据：${structuralSnapshot.counts.texts} 条文字、${structuralSnapshot.counts.structuralTags} 条设备代号、${structuralSnapshot.counts.bomRows} 行 BOM。`;
+    await appendMessage(snapshot.drawing.conversationId, {
+      ownerScope,
+      role: "assistant",
+      type: "drawing_summary",
+      payload: { drawingId, summary: structuralSummary, warnings: [visualWarning], structuralOnly: true },
+    });
+    await appendMessage(snapshot.drawing.conversationId, {
+      ownerScope,
+      role: "assistant",
+      type: "bom_results",
+      payload: { drawingId, physicalDeviceCount: 0, itemCount: structuralBom?.items.length ?? 0, totalQuantity: structuralBom?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0, structuralOnly: true },
+    });
+    await updateAnalysisStatus(drawingId, ownerScope, { status: "requires_review", progress: 100, stage: "CAD 结构分析完成（视觉识别受限）" });
+    return {
+      status: "requires_review" as const,
+      components: [],
+      physicalDevices: [],
+      bomItems: structuralBom?.items ?? [],
+      analysisDiagnostics: { attemptedTiles: rendered.tiles.length, completedTiles: 0, failedTiles: rendered.tiles.length, verificationTiles: 0, rawDetectionCount: 0, coverageLimited: true },
+      structuralOnly: true,
+    };
+  }
   for (const item of stages.slice(4)) await progress(drawingId, ownerScope, snapshot.drawing.conversationId, snapshot.job.id, item, delayMs);
   const componentInputs = componentsFromAnalysis(analysisMode, analysis, rendered);
   const components = await replaceComponents(drawingId, ownerScope, componentInputs);
   const physicalDevices = await replacePhysicalDevices(drawingId, ownerScope, groupPhysicalDevices(deviceOccurrences(components)));
-  const bom = await generateBom(drawingId, ownerScope);
+  const bom = structuralSnapshot?.bomRows.length
+    ? await replaceBomFromNativeRows(drawingId, ownerScope, structuralSnapshot.bomRows)
+    : await generateBom(drawingId, ownerScope);
   const analysisDiagnostics = analysisDiagnosticsFrom(analysisMode, analysis, rendered, components.length);
   const analysisWarnings = warningList(analysis.warnings, analysisDiagnostics);
   const reviewCount = components.filter((component) => component.reviewStatus === "requires_review").length;

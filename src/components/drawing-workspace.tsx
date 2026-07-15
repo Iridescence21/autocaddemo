@@ -224,7 +224,13 @@ export default function DrawingWorkspace() {
         if (!handled && (upload.uploaded || /分析|识别|元件|analy[sz]e|identify/i.test(finalText))) {
           await fetch(`/api/drawings/${drawingId}/analyze`, { method: "POST" });
         } else if (!handled) {
-          await appendText("当前演示版支持筛选元件、选择标签、修改分类、移除元件、生成 BOM 和导出结果。", "assistant", conversationId);
+          const response = await fetch(`/api/conversations/${conversationId}/query`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: finalText }),
+          });
+          const data = (await response.json()) as { message?: string };
+          if (!response.ok) throw new Error(data.message ?? "图纸问询未完成，请重试。");
         }
       }
       await refresh(conversationId);
